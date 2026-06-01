@@ -72,16 +72,27 @@ st.markdown("""
     .stSidebar { background-color: #1a3a5c; }
     section[data-testid="stSidebar"] { background-color: #1a3a5c; }
 
-    /* Force all sidebar text white so it is readable on the blue background */
-    section[data-testid="stSidebar"] * { color: #ffffff !important; }
-    section[data-testid="stSidebar"] .stSelectbox label,
-    section[data-testid="stSidebar"] .stSlider label,
-    section[data-testid="stSidebar"] .stRadio label { color: #ffffff !important; }
+    /* Sidebar labels and headings */
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] h1,
+    section[data-testid="stSidebar"] h2,
+    section[data-testid="stSidebar"] h3,
+    section[data-testid="stSidebar"] h4,
+    section[data-testid="stSidebar"] span { color: #ffffff !important; }
 
-    /* Style the select dropdowns inside the sidebar */
-    section[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] {
-        background-color: #0f2744; border-color: #60a5fa;
+    /* Selectbox — dark background, white text, blue border */
+    section[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div {
+        background-color: #0f2744 !important;
+        border-color: #60a5fa !important;
+        color: #ffffff !important;
     }
+    section[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] svg {
+        fill: #ffffff !important;
+    }
+
+    /* Radio buttons */
+    section[data-testid="stSidebar"] .stRadio div { color: #ffffff !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -248,7 +259,12 @@ df = df[df["date_posted"] >= pd.Timestamp(cutoff)]
 
 # ── Page header ───────────────────────────────────────────────────────────────
 st.markdown("# Job Market Analytics Dashboard")
-st.markdown("*Market intelligence for Data Engineering and Analytics roles*")
+st.markdown(
+    "*Market intelligence for Data Engineering and Analytics roles* &nbsp;|&nbsp; "
+    "Marc Abi Zeid Daou &nbsp;|&nbsp; "
+    "[Live Demo](https://job-market-analysis-ndmqelnezlfa64hyyhhwkv.streamlit.app) &nbsp;|&nbsp; "
+    "[GitHub](https://github.com/marcazdaou/Job-Market-Analysis)"
+)
 st.markdown("---")
 
 # Stop rendering if the filters result in zero records — avoids blank/broken charts
@@ -332,12 +348,12 @@ with col_b:
     skill_df = pd.DataFrame(skill_counts, columns=["skill", "count"])
     fig2 = px.bar(
         skill_df, x="count", y="skill", orientation="h",
-        color="count", color_continuous_scale="Purples",
+        color_discrete_sequence=["#a78bfa"],  # single color so all bars are equally visible
         labels={"count": "Job Postings", "skill": ""},
         template="plotly_dark"
     )
     fig2.update_layout(
-        height=420, showlegend=False, coloraxis_showscale=False,
+        height=420, showlegend=False,
         margin=dict(l=0, r=10, t=10, b=10),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
     )
