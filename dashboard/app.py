@@ -61,8 +61,8 @@ st.markdown("""
     /* Blue left-border section title style */
     .section-header {
         font-size: 1.3rem;
-        font-weight: 600;
-        color: #e2e8f0;
+        font-weight: 700;
+        color: #ffffff;
         border-left: 4px solid #60a5fa;
         padding-left: 12px;
         margin: 24px 0 16px 0;
