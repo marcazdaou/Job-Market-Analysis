@@ -1,0 +1,48 @@
+{
+  "best_model": "Random Forest",
+  "mae": 17452.4,
+  "r2": 0.3131,
+  "cv_r2_mean": 0.5477,
+  "cv_r2_std": 0.2341,
+  "n_features": 46,
+  "n_train": 1235,
+  "model_comparison": {
+    "Linear Regression": {
+      "mae": 18957.37,
+      "r2": 0.4187,
+      "cv_r2_mean": 0.5084,
+      "cv_r2_std": 0.2088,
+      "train_time_s": 0.03
+    },
+    "Random Forest": {
+      "mae": 17452.4,
+      "r2": 0.3131,
+      "cv_r2_mean": 0.5477,
+      "cv_r2_std": 0.2341,
+      "train_time_s": 0.41
+    },
+    "Gradient Boosting": {
+      "mae": 17865.01,
+      "r2": 0.3385,
+      "cv_r2_mean": 0.4289,
+      "cv_r2_std": 0.1676,
+      "train_time_s": 1.6
+    }
+  },
+  "top_features": {
+    "seniority": 0.2714,
+    "experience": 0.1374,
+    "skill_Tableau": 0.062,
+    "skill_Power_BI": 0.0415,
+    "skill_count": 0.034,
+    "loc_Remote": 0.0343,
+    "skill_Data_Warehousing": 0.0285,
+    "type_Full_time": 0.0269,
+    "skill_Kubernetes": 0.0259,
+    "skill_TensorFlow": 0.0246,
+    "skill_Snowflake": 0.0245,
+    "skill_Scikit_learn": 0.0188,
+    "skill_Statistics": 0.0164,
+    "skill_Data_Modeling": 0.0161
+  }
+}
