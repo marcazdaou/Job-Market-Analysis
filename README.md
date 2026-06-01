@@ -163,6 +163,7 @@ The model with the highest cross-validated R2 is automatically selected. Results
 Company names, skills, and posting dates are synthetically assigned. Salary figures for the real records come directly from the Kaggle dataset.
 
 ---
+PS: The model's R² reflects the limitations of the available features. Salary in this industry is largely driven by company, year, and negotiation — factors not captured in job postings. The model still captures the directional signal from seniority and location, which is the best you can do with this dataset.
 
 ## Author
 
