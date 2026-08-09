@@ -1,48 +1,48 @@
 {
   "best_model": "Random Forest",
-  "mae": 17452.4,
-  "r2": 0.3131,
-  "cv_r2_mean": 0.5477,
-  "cv_r2_std": 0.2341,
-  "n_features": 46,
-  "n_train": 1235,
+  "mae": 8758.9,
+  "r2": 0.84,
+  "cv_r2_mean": 0.8332,
+  "cv_r2_std": 0.0084,
+  "n_features": 45,
+  "n_train": 1600,
   "model_comparison": {
     "Linear Regression": {
-      "mae": 18957.37,
-      "r2": 0.4187,
-      "cv_r2_mean": 0.5084,
-      "cv_r2_std": 0.2088,
-      "train_time_s": 0.03
+      "mae": 12806.69,
+      "r2": 0.6915,
+      "cv_r2_mean": 0.6869,
+      "cv_r2_std": 0.0298,
+      "train_time_s": 0.07
     },
     "Random Forest": {
-      "mae": 17452.4,
-      "r2": 0.3131,
-      "cv_r2_mean": 0.5477,
-      "cv_r2_std": 0.2341,
-      "train_time_s": 0.41
+      "mae": 8758.9,
+      "r2": 0.84,
+      "cv_r2_mean": 0.8332,
+      "cv_r2_std": 0.0084,
+      "train_time_s": 0.68
     },
     "Gradient Boosting": {
-      "mae": 17865.01,
-      "r2": 0.3385,
-      "cv_r2_mean": 0.4289,
-      "cv_r2_std": 0.1676,
-      "train_time_s": 1.6
+      "mae": 9558.83,
+      "r2": 0.8118,
+      "cv_r2_mean": 0.8103,
+      "cv_r2_std": 0.0161,
+      "train_time_s": 2.77
     }
   },
   "top_features": {
-    "seniority": 0.2714,
-    "experience": 0.1374,
-    "skill_Tableau": 0.062,
-    "skill_Power_BI": 0.0415,
-    "skill_count": 0.034,
-    "loc_Remote": 0.0343,
-    "skill_Data_Warehousing": 0.0285,
-    "type_Full_time": 0.0269,
-    "skill_Kubernetes": 0.0259,
-    "skill_TensorFlow": 0.0246,
-    "skill_Snowflake": 0.0245,
-    "skill_Scikit_learn": 0.0188,
-    "skill_Statistics": 0.0164,
-    "skill_Data_Modeling": 0.0161
+    "seniority": 0.5474,
+    "skill_Tableau": 0.0907,
+    "skill_Data_Warehousing": 0.0473,
+    "skill_Machine_Learning": 0.0356,
+    "skill_Data_Modeling": 0.0314,
+    "experience": 0.0246,
+    "skill_Scikit_learn": 0.0241,
+    "skill_Statistics": 0.0219,
+    "skill_count": 0.0092,
+    "skill_TensorFlow": 0.0093,
+    "skill_dbt": 0.0091,
+    "skill_Power_BI": 0.0089,
+    "skill_AWS": 0.0084,
+    "skill_Azure": 0.0083
   }
 }
