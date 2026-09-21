@@ -1,48 +1,48 @@
 {
   "best_model": "Random Forest",
-  "mae": 8758.9,
-  "r2": 0.84,
-  "cv_r2_mean": 0.8332,
-  "cv_r2_std": 0.0084,
+  "mae": 9943.39,
+  "r2": 0.7927,
+  "cv_r2_mean": 0.8005,
+  "cv_r2_std": 0.0067,
   "n_features": 45,
   "n_train": 1600,
   "model_comparison": {
     "Linear Regression": {
-      "mae": 12806.69,
-      "r2": 0.6915,
-      "cv_r2_mean": 0.6869,
-      "cv_r2_std": 0.0298,
-      "train_time_s": 0.07
+      "mae": 12961.69,
+      "r2": 0.6674,
+      "cv_r2_mean": 0.6713,
+      "cv_r2_std": 0.0097,
+      "train_time_s": 0.03
     },
     "Random Forest": {
-      "mae": 8758.9,
-      "r2": 0.84,
-      "cv_r2_mean": 0.8332,
-      "cv_r2_std": 0.0084,
-      "train_time_s": 0.68
+      "mae": 9943.39,
+      "r2": 0.7927,
+      "cv_r2_mean": 0.8005,
+      "cv_r2_std": 0.0067,
+      "train_time_s": 0.56
     },
     "Gradient Boosting": {
-      "mae": 9558.83,
-      "r2": 0.8118,
-      "cv_r2_mean": 0.8103,
-      "cv_r2_std": 0.0161,
-      "train_time_s": 2.77
+      "mae": 10609.45,
+      "r2": 0.7622,
+      "cv_r2_mean": 0.7796,
+      "cv_r2_std": 0.011,
+      "train_time_s": 1.88
     }
   },
   "top_features": {
-    "seniority": 0.5474,
-    "skill_Tableau": 0.0907,
-    "skill_Data_Warehousing": 0.0473,
-    "skill_Machine_Learning": 0.0356,
-    "skill_Data_Modeling": 0.0314,
-    "experience": 0.0246,
-    "skill_Scikit_learn": 0.0241,
-    "skill_Statistics": 0.0219,
-    "skill_count": 0.0092,
-    "skill_TensorFlow": 0.0093,
-    "skill_dbt": 0.0091,
-    "skill_Power_BI": 0.0089,
-    "skill_AWS": 0.0084,
-    "skill_Azure": 0.0083
+    "seniority": 0.5332,
+    "skill_Power_BI": 0.1012,
+    "skill_Data_Warehousing": 0.0517,
+    "skill_Scikit_learn": 0.0317,
+    "experience": 0.0289,
+    "skill_Statistics": 0.0241,
+    "skill_TensorFlow": 0.0216,
+    "skill_Machine_Learning": 0.0158,
+    "skill_Tableau": 0.0141,
+    "skill_Data_Modeling": 0.0117,
+    "skill_AWS": 0.011,
+    "skill_count": 0.0096,
+    "skill_Azure": 0.0087,
+    "skill_Airflow": 0.0083
   }
 }

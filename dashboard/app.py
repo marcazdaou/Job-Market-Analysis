@@ -93,6 +93,10 @@ st.markdown("""
 
     /* Radio buttons */
     section[data-testid="stSidebar"] .stRadio div { color: #ffffff !important; }
+    /* Hide duplicate slider min/max labels */
+    div[data-testid="stSliderTickBar"] {
+        display: none;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -235,11 +239,12 @@ with st.sidebar:
     sal_max = int(df_all["salary_avg"].max())
     sel_sal = st.slider("Salary Range ($)", sal_min, sal_max, (sal_min, sal_max), step=5000)
 
-    st.markdown("---")
-    st.markdown("#### Date Range")
+
     # How many days back to show postings (default: last 30 days)
-    days_back = st.slider("Days back", 7, 60, 30)
-    cutoff = datetime.now() - timedelta(days=days_back)
+    date_filter = st.selectbox(
+        "Date Range",
+        ["All time", "Last 7 days", "Last 30 days", "Last 60 days"]
+)
 
 
 # ── Apply filters ─────────────────────────────────────────────────────────────
@@ -255,7 +260,15 @@ if remote_opt == "Remote":
 elif remote_opt == "On-site":
     df = df[df["remote"] == 0]
 df = df[(df["salary_avg"] >= sel_sal[0]) & (df["salary_avg"] <= sel_sal[1])]
-df = df[df["date_posted"] >= pd.Timestamp(cutoff)]
+if date_filter != "All time":
+    days = {
+        "Last 7 days": 7,
+        "Last 30 days": 30,
+        "Last 60 days": 60
+    }[date_filter]
+
+    cutoff = datetime.now() - timedelta(days=days)
+    df = df[df["date_posted"] >= pd.Timestamp(cutoff)]
 
 # ── Page header ───────────────────────────────────────────────────────────────
 st.markdown("# Job Market Analytics Dashboard")
