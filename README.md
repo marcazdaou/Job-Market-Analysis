@@ -1,173 +1,144 @@
 # Job Market Analytics Dashboard
 
-A full-stack data analytics platform for exploring Data Engineering and Analytics job market trends. Built with Python, Streamlit, and Scikit-learn — covering the full pipeline from data ingestion to machine learning to interactive visualization.
+An end-to-end Python data analytics and machine learning project for exploring a **demonstration dataset** of data engineering and analytics roles. The project builds a SQLite database, compares salary-prediction models, and presents interactive visualizations and a salary estimator in Streamlit.
 
-![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.32+-red?logo=streamlit)
-![Scikit-learn](https://img.shields.io/badge/Scikit--learn-1.4+-orange?logo=scikit-learn)
-![Plotly](https://img.shields.io/badge/Plotly-5.19+-purple?logo=plotly)
-![SQLite](https://img.shields.io/badge/SQLite-3-lightblue?logo=sqlite)
-
----
+> **Data transparency:** This is a portfolio and learning project, **not a live job board or a source of current hiring statistics**. The pipeline can use historical salary records from Kaggle supplemented with synthetic records, or generate a fully synthetic dataset when the Kaggle file is absent. Company names, skill requirements, and posting dates are generated for demonstration; they do not represent verified vacancies at the named companies.
 
 ## Overview
 
-This project demonstrates an end-to-end data engineering and analytics workflow:
+The workflow has four stages:
 
-1. **Data ingestion** — Loads real salary data from the Kaggle Data Science Job Salaries dataset, supplemented with synthetic records for ML training
-2. **Storage** — Persists all records in a structured SQLite database
-3. **Machine learning** — Compares three regression models (Linear Regression, Random Forest, Gradient Boosting) using cross-validation and selects the best performer for salary prediction
-4. **Visualization** — Serves an interactive Streamlit dashboard with filters, charts, and a salary estimator
-
----
+1. **Data preparation:** Load eligible U.S. salary records from an optional Kaggle CSV, or generate synthetic fallback records; create additional synthetic records when the CSV is present.
+2. **Storage:** Rebuild and populate a local SQLite `jobs` table with source labels distinguishing Kaggle-derived and synthetic records.
+3. **Machine learning:** Engineer numerical features, evaluate three regression algorithms, and save the selected model and its evaluation metadata.
+4. **Visualization:** Run a Streamlit dashboard with interactive charts, filters, model comparisons, and a salary estimator.
 
 ## Features
 
-**Market Analysis**
-- KPI cards: total postings, average salary, remote percentage, companies hiring
-- Average salary by job title
-- Top in-demand skills across all postings
-- Salary premium per skill — which technologies correlate with higher pay
-- Postings by location, colored by average salary
-- Salary distribution histogram
-- Posting volume over time
-- Experience vs. salary scatter plot
-- Salary by experience band (SQL-aggregated)
+### Market-analysis dashboard
 
-**Salary Estimator**
-- Input a job title, location, years of experience, and skills
-- Returns a predicted salary with conservative and optimistic ranges
-- Identifies high-demand skills missing from the input profile
+- Summary cards for dataset record count, average salary, remote share, and distinct company labels.
+- Salary by job title, skill frequency and salary associations, location comparisons, salary distribution, posting-date distribution, and experience-based visualizations.
+- Filters for job title, location, remote/on-site status, salary range, and date range.
 
-**Model Comparison**
-- Trains and compares Linear Regression, Random Forest, and Gradient Boosting
-- Evaluates all three using 5-fold cross-validation
-- Displays results as a bar chart and formatted table
-- Selects the model with the highest cross-validated R²
+**Interpretation:** The cards and charts describe the records currently loaded into SQLite. In synthetic-only mode, all values are simulated. In mixed mode, only the source salary values and other fields carried over from Kaggle are historical source data; generated companies, skills, dates, and estimated salary ranges are not independently observed job postings. The “companies” metric counts assigned company labels, not confirmed employers hiring.
 
-**Interactive Filters**
-- Filter by job title, location, work type (remote / on-site)
-- Salary range slider
-- Date range control
+### Salary estimator
 
----
+- Accepts job title, location, experience, and skill inputs.
+- Uses the saved model to produce a salary estimate and illustrative range.
+- Highlights additional skills using the project's dataset-driven logic.
 
-## Tech Stack
+Estimates are demonstrations of the trained model, **not compensation advice or verified market quotes**.
 
-| Layer | Technology |
-|---|---|
+### Model comparison
+
+- Compares **Linear Regression**, **Random Forest**, and **Gradient Boosting**.
+- Uses an **80/20 train/test split** and **5-fold cross-validation**.
+- Displays test mean absolute error (MAE), test R², and mean cross-validation R².
+- Saves the model selected by the highest mean cross-validation R², along with its feature-column order and evaluation metadata.
+
+## Technology
+
+| Area | Tools |
+| --- | --- |
 | Language | Python 3.11+ |
-| Data Pipeline | Pandas, SQLite |
-| Machine Learning | Scikit-learn (LinearRegression, RandomForest, GradientBoosting) |
-| Dashboard | Streamlit, Plotly |
-| Data Storage | SQLite (jobs.db) |
-| Feature Engineering | One-hot encoding, seniority extraction, skill flags |
+| Data preparation | Pandas, NumPy |
+| Database | SQLite |
+| Machine learning | scikit-learn |
+| Dashboard and charts | Streamlit, Plotly |
+| Model artifacts | Pickle, JSON |
 
----
+## Data sources and limitations
 
-## Project Structure
+The data collector (`pipeline/collector.py`) supports two modes:
 
-```
-job-market-analytics/
+| Mode | Records loaded | What the records represent |
+| --- | --- | --- |
+| Kaggle CSV available | Eligible U.S. Kaggle salary records **plus 1,200 synthetic records** | Historical salary records supplemented by simulated job records. The number of eligible Kaggle rows depends on the CSV and filtering. |
+| Kaggle CSV unavailable | **2,000 synthetic records** | A fully simulated dataset for running the complete project without the optional CSV. |
+
+The collector filters Kaggle records to `company_location == "US"` and `salary_in_usd >= 50000`. The previously documented **344 Kaggle records** is an example from one dataset version and run, not a guaranteed count. With 344 eligible Kaggle rows, mixed mode would contain **1,544 total records**.
+
+The Kaggle file contains salary data, **not verified current job advertisements**. The pipeline assigns company names and skills, generates posting dates within the preceding 60 days, estimates salary bounds around Kaggle salary values, and generates experience-year values from experience bands. In synthetic-only mode, salaries and the other job fields are simulated. Accordingly, charts titled “postings,” “companies hiring,” or “in-demand skills” should be understood as descriptions of the demonstration dataset rather than measured hiring-market activity.
+
+Kaggle dataset: [Data Science Job Salaries](https://www.kaggle.com/datasets/ruchi798/data-science-job-salaries). Download the dataset yourself if you want to use the optional CSV.
+
+## Project structure
+
+```text
+Job-Market-Analysis/
 ├── pipeline/
-│   └── collector.py          # Data ingestion and SQLite loading
+│   └── collector.py       # Load or generate records and populate SQLite
 ├── models/
-│   ├── train.py              # Model training and comparison
-│   ├── salary_model.pkl      # Saved model (auto-generated)
-│   └── model_meta.json       # Model metrics (auto-generated)
+│   ├── train.py           # Feature engineering, evaluation, model selection
+│   ├── salary_model.pkl   # Generated trained model
+│   └── model_meta.json    # Generated evaluation metadata
 ├── dashboard/
-│   └── app.py                # Streamlit dashboard
+│   └── app.py             # Streamlit dashboard
 ├── data/
-│   ├── ds_salaries.csv       # Kaggle dataset (you provide this)
-│   └── jobs.db               # SQLite database (auto-generated)
-├── setup.py                  # One-command setup script
+│   ├── ds_salaries.csv    # Optional Kaggle CSV supplied by the user
+│   └── jobs.db            # Generated SQLite database
+├── setup.py               # Install, prepare data, train, launch dashboard
 ├── requirements.txt
 └── README.md
 ```
 
----
+Generated files may not exist until you run the pipeline.
 
-## Setup
+## Run locally
 
-### Requirements
+**Requirements:** Python 3.11 or newer and pip.
 
-- Python 3.11 or higher
-- pip
-
-### Step 1 — Clone the repository
+### 1. Clone the repository
 
 ```bash
-git clone https://github.com/marcazdaou/job-market-analytics.git
-cd job-market-analytics
+git clone https://github.com/marcazdaou/Job-Market-Analysis.git
+cd Job-Market-Analysis
 ```
 
-### Step 2 — Install dependencies
+### 2. Optionally add the Kaggle dataset
 
-```bash
-pip install -r requirements.txt
-```
+Download `ds_salaries.csv` from the [Kaggle dataset page](https://www.kaggle.com/datasets/ruchi798/data-science-job-salaries) and place it at `data/ds_salaries.csv`.
 
-### Step 3 — Add the Kaggle dataset (optional but recommended)
+If you skip this step, the collector generates 2,000 synthetic records. The dataset mode is determined when the collector runs; adding the CSV later requires rerunning the collector and retraining the model.
 
-1. Go to [kaggle.com/datasets/ruchi798/data-science-job-salaries](https://www.kaggle.com/datasets/ruchi798/data-science-job-salaries)
-2. Create a free Kaggle account if you do not have one
-3. Download `ds_salaries.csv`
-4. Place it at `data/ds_salaries.csv`
-
-If you skip this step, the app will run using synthetic data only.
-
-### Step 4 — Run the setup script
+### 3. Run the setup script
 
 ```bash
 python setup.py
 ```
 
-This will:
-- Load the dataset and populate the SQLite database
-- Train and compare the three regression models
-- Launch the dashboard at [http://localhost:8501](http://localhost:8501)
+The script installs its Python dependencies, rebuilds the SQLite database, trains the models, and starts Streamlit. Open **http://localhost:8501** if your browser does not open automatically.
 
-### Manual steps (alternative to setup.py)
+**Alternative: run each stage manually**
 
 ```bash
-python pipeline/collector.py   # Load data into database
-python models/train.py         # Train and compare models
-streamlit run dashboard/app.py # Launch dashboard
+python -m pip install -r requirements.txt
+python pipeline/collector.py
+python models/train.py
+python -m streamlit run dashboard/app.py
 ```
 
----
+**Note:** Running the collector drops and recreates the `jobs` table. Do not store records you need to preserve in the generated database without backing them up first.
 
-## Model Performance
+## Model training and evaluation
 
-Three models are trained and evaluated on every run. Results from the current dataset:
+`models/train.py` engineers features from experience, remote status, job-title seniority, skill count, **27 individual skill indicators**, one-hot-encoded locations, and employment types. It trains the three candidate regressors and records test MAE, test R², and mean and standard deviation of 5-fold cross-validation R².
 
-| Model | Test MAE | Test R2 | CV R2 |
-|---|---|---|---|
-| Linear Regression | ~$18,700 | 0.43 | 0.52 |
-| Random Forest | ~$16,500 | 0.48 | 0.57 |
-| Gradient Boosting | ~$17,200 | 0.44 | 0.50 |
+The selected model is saved to `models/salary_model.pkl`; the comparison results, feature count, and selected-model metrics are saved to `models/model_meta.json`.
 
-The model with the highest cross-validated R2 is automatically selected. Results will vary slightly on each run due to random data generation.
+**For exact performance numbers, use the output of your own run or the generated `model_meta.json`.** Scores vary with the input CSV, randomly generated records, and the available features. Do not treat a score obtained on fully synthetic records as evidence of accuracy on real-world salaries. The current training script computes cross-validation on the full feature matrix, including the held-out test portion; consequently, its cross-validation score is useful for this project’s comparison but should not be presented as a fully independent validation result.
 
-**Features used:** seniority level, years of experience, remote flag, skill count, individual skill flags (27 technologies), location (one-hot), employment type (one-hot)
+## Known limitations
 
----
-
-## Data Sources
-
-| Records | Source |
-|---|---|
-| 344 real records | Kaggle — Data Science Job Salaries (self-reported, 2020-2022) |
-| 1,200 synthetic records | Generated to supplement ML training |
-
-Company names, skills, and posting dates are synthetically assigned. Salary figures for the real records come directly from the Kaggle dataset.
-
----
-PS: The model's R² reflects the limitations of the available features. Salary in this industry is largely driven by company, year, and negotiation — factors not captured in job postings. The model still captures the directional signal from seniority and location, which is the best you can do with this dataset.
+- The project does not scrape or continuously refresh real job advertisements.
+- Company names and posting dates are assigned, not verified; the date filter does not establish current market trends.
+- Skill frequencies and skill-related salary comparisons reflect generated skill assignments.
+- Synthetic data can make model performance look different from performance on real job-market data.
+- The model and dashboard are educational demonstrations, not tools for hiring decisions or salary negotiation.
 
 ## Author
 
-**Marc Abi Zeid Daou**
-BS Computer Science, UMass Boston
-
-[LinkedIn](https://www.linkedin.com/in/marc-abi-zeid-daou/) · [GitHub](https://github.com/marcazdaou) · [Portfolio](https://marcazdaou.github.io)
+**Marc Abi Zeid Daou**  
+[GitHub](https://github.com/marcazdaou)
