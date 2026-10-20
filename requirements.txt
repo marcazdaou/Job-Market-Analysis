@@ -1,6 +1,8 @@
-streamlit>=1.32.0
-plotly>=5.19.0
-pandas>=2.0.0
-scikit-learn>=1.4.0
-numpy>=1.26.0
-requests>=2.31.0
+# Pinned so the hosted app loads models/salary_model.pkl with the exact
+# scikit-learn version it was trained with (pickles are version-specific).
+streamlit==1.58.0
+plotly==6.7.0
+pandas==3.0.3
+numpy==2.4.2
+scikit-learn==1.8.0
+pyarrow==24.0.0

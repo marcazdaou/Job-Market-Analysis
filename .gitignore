@@ -1,7 +1,9 @@
-# Kaggle dataset — do not commit (not your data to redistribute)
+# Raw source data and local databases (too large for GitHub; see README for the source)
+data/tech_jobs_2026/
+data/*.db
 data/ds_salaries.csv
 
-# Python cache files — auto-generated, not needed
+# Python cache files
 __pycache__/
 *.pyc
 *.pyo
@@ -9,6 +11,7 @@ __pycache__/
 .Python
 
 # Virtual environments
+.venv/
 venv/
 env/
 .env/

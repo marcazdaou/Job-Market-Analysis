@@ -1,679 +1,1045 @@
+"""Step 3 of 3: the public Streamlit dashboard.
+
+Reads the committed artifacts only, so the hosted app needs no setup:
+    data/jobs_clean.parquet   cleaned postings      (pipeline/collector.py)
+    data/data_summary.json    cleaning funnel       (pipeline/collector.py)
+    models/salary_model.pkl   trained salary model  (models/train.py)
+    models/model_meta.json    evaluation results    (models/train.py)
+
+Layout: a header, sidebar filters, then six tabs:
+    Overview · Salaries · Skills · Explore a role · Salary predictor (ML) · About the data
+
+Run locally:  streamlit run dashboard/app.py
 """
-Job Market Analytics Dashboard
-
-This is the third and final step in the pipeline. It reads from the SQLite
-database and the trained model, then renders an interactive web dashboard
-using Streamlit.
-
-Launch with:
-    streamlit run dashboard/app.py
-Then open: http://localhost:8501
-"""
-
-import streamlit as st
-import sqlite3
-import pandas as pd
 import json
 import pickle
-import os
+import sys
+from contextlib import contextmanager
+from pathlib import Path
+
 import numpy as np
-import plotly.express as px
+import pandas as pd
 import plotly.graph_objects as go
-from collections import Counter
-from datetime import datetime, timedelta
+import plotly.io as pio
+import streamlit as st
 
-# ── File paths ────────────────────────────────────────────────────────────────
-# BASE is the directory this file lives in (dashboard/).
-# All paths go one level up ("../") to reach the project root.
-BASE  = os.path.dirname(__file__)
-DB    = os.path.join(BASE, "../data/jobs.db")              # SQLite database
-MODEL = os.path.join(BASE, "../models/salary_model.pkl")   # trained model
-META  = os.path.join(BASE, "../models/model_meta.json")    # model metrics
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "pipeline"))
+from features import OTHER_FAMILY, SENIORITY_ORDER, model_frame, role_family, seniority  # noqa: E402
 
-# ── Page configuration ────────────────────────────────────────────────────────
-# This must be the first Streamlit call in the file.
-# layout="wide" uses the full browser width instead of a narrow centered column.
-st.set_page_config(
-    page_title="Job Market Analytics",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+DATA = ROOT / "data" / "jobs_clean.parquet"
+SUMMARY = ROOT / "data" / "data_summary.json"
+MODEL = ROOT / "models" / "salary_model.pkl"
+META = ROOT / "models" / "model_meta.json"
 
-# ── Custom CSS styling ────────────────────────────────────────────────────────
-# Streamlit renders a React app in the browser. We inject raw CSS to override
-# default styles. unsafe_allow_html=True is required to render HTML/CSS strings.
-st.markdown("""
+AUTHOR = "Marc Abi Zeid Daou"
+LINKS = {"GitHub": "https://github.com/marcazdaou/Job-Market-Analysis",
+         "LinkedIn": "https://www.linkedin.com/in/marc-abi-zeid-daou/",
+         "Portfolio": "https://marcazdaou.github.io/my-portfolio/"}
+
+MIN_GROUP = 30  # medians from fewer salaried postings than this are hidden (too noisy)
+
+st.set_page_config(page_title="Job Market Analytics", layout="wide")
+
+# ══ Visual style ══════════════════════════════════════════════════════════════
+# Colors come from a palette validated for color-vision deficiency. Blue is the
+# single-series color; orange is only used as the second series in comparisons.
+INK, INK_2, MUTED = "#0b0b0b", "#52514e", "#898781"
+GRID, AXIS, CARD = "#e9e8e3", "#c3c2b7", "#ffffff"
+BLUE, BLUE_LIGHT, ORANGE, RED = "#2a78d6", "#b7d3f6", "#eb6834", "#e34948"
+NAVY = "#0d366b"
+BLUE_RAMP = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281"]  # ordinal: light -> dark
+FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+
+# One Plotly template shared by every chart: hairline grid, white card surface,
+# muted axis text, and a clean white tooltip.
+_axis = dict(gridcolor=GRID, linecolor=AXIS, zeroline=False, ticks="",
+             tickfont=dict(color=MUTED, size=12), title=dict(font=dict(color=INK_2, size=12)))
+pio.templates["jobs"] = go.layout.Template(layout=dict(
+    font=dict(family=FONT, size=13, color=INK_2),
+    paper_bgcolor=CARD, plot_bgcolor=CARD,
+    xaxis=_axis, yaxis=_axis, colorway=[BLUE, ORANGE],
+    hoverlabel=dict(bgcolor="white", bordercolor=GRID, font=dict(family=FONT, color=INK, size=13)),
+    margin=dict(l=8, r=24, t=8, b=8), bargap=0.3, barcornerradius=4, showlegend=False,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(color=INK_2)),
+))
+pio.templates.default = "jobs"
+PLOT_CONFIG = {"displaylogo": False, "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"]}
+
+# Page-level CSS: soft background, a gradient header, white "cards" around charts.
+st.markdown(f"""
 <style>
-    /* Main page background */
-    .main { background-color: #0f1117; }
+  .stApp {{ background: #f7f7f5; }}
+  .block-container {{ padding-top: 3.2rem; max-width: 1300px; }}
+  header[data-testid="stHeader"] {{ background: transparent; }}
+  h1, h2, h3 {{ color: {INK}; letter-spacing: -0.01em; }}
 
-    /* KPI stat cards at the top of the dashboard */
-    .metric-card {
-        background: linear-gradient(135deg, #0f2744, #0d3260);
-        border: 1px solid #1d6fa4;
-        border-radius: 12px;
-        padding: 20px;
-        text-align: center;
-    }
-    .metric-value { font-size: 2rem; font-weight: 700; color: #60a5fa; }
-    .metric-label { font-size: 0.85rem; color: #94a3b8; margin-top: 4px; }
+  /* Header: navy-to-teal gradient panel. */
+  .masthead {{ text-align: center; padding: 40px 28px 30px; margin-bottom: 10px; border-radius: 14px;
+               background: linear-gradient(120deg, #0d2340 0%, #163f6e 50%, #1b6a80 100%); }}
+  .masthead .eyebrow {{ font-size: 0.75rem; letter-spacing: 0.2em; text-transform: uppercase;
+                        color: #a9c3dd; font-weight: 600; }}
+  .masthead h1 {{ font-size: 2.45rem; font-weight: 750; line-height: 1.18; margin: 12px auto 12px;
+                  max-width: 880px; padding: 0; color: #ffffff; }}
+  .masthead .num {{ color: #7cc4ff; }}   /* headline number in sky blue */
+  .masthead .sub {{ font-size: 1.04rem; color: #d6e2ee; max-width: 740px; margin: 0 auto; line-height: 1.55; }}
 
-    /* Blue left-border section title style */
-    .section-header {
-        font-size: 1.3rem;
-        font-weight: 700;
-        color: #1e293b;
-        border-left: 4px solid #60a5fa;
-        padding-left: 12px;
-        margin: 24px 0 16px 0;
-    }
+  /* Key stats: plain number/label pairs, no lines or boxes */
+  .masthead .stats {{ display: flex; justify-content: center; flex-wrap: wrap; gap: 6px 44px;
+                      margin: 26px auto 0; max-width: 880px; }}
+  .masthead .stat .v {{ font-size: 1.3rem; font-weight: 700; color: #ffffff; }}
+  .masthead .stat .l {{ font-size: 0.72rem; color: #a9c3dd; text-transform: uppercase; letter-spacing: 0.08em; }}
 
-    /* Sidebar background — both selectors needed for Streamlit version compatibility */
-    .stSidebar { background-color: #1a3a5c; }
-    section[data-testid="stSidebar"] { background-color: #1a3a5c; }
+  /* Author name in warm gold so it stands apart from the blue background */
+  .masthead .author {{ margin-top: 26px; font-size: 1.12rem; color: #f2c66d; font-weight: 700;
+                       letter-spacing: 0.02em; }}
+  .masthead .links {{ margin-top: 10px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }}
+  .masthead .links a {{ color: #0d2340; text-decoration: none; font-size: 0.86rem; font-weight: 650;
+                        padding: 6px 16px; border-radius: 6px; background: #ffffff; }}
+  .masthead .links a:hover {{ background: #f2c66d; }}
+  @media (max-width: 640px) {{   /* phones: smaller headline and tighter stats */
+    .masthead {{ padding: 28px 16px 22px; }}
+    .masthead h1 {{ font-size: 1.75rem; }}
+    .masthead .stats {{ gap: 6px 22px; }}
+  }}
 
-    /* Sidebar labels and headings */
-    section[data-testid="stSidebar"] label,
-    section[data-testid="stSidebar"] p,
-    section[data-testid="stSidebar"] h1,
-    section[data-testid="stSidebar"] h2,
-    section[data-testid="stSidebar"] h3,
-    section[data-testid="stSidebar"] h4,
-    section[data-testid="stSidebar"] span { color: #ffffff !important; }
+  /* Key findings ("the story") */
+  .finding {{ background: {CARD}; border: 1px solid rgba(11,11,11,0.07); border-radius: 14px;
+              padding: 16px 18px; height: 100%; box-shadow: 0 1px 3px rgba(16,24,40,0.05); }}
+  .finding .q {{ font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: {BLUE};
+                 font-weight: 650; }}
+  .finding .a {{ font-size: 1.35rem; font-weight: 700; color: {INK}; margin: 6px 0 4px; line-height: 1.25; }}
+  .finding .d {{ font-size: 0.86rem; color: {INK_2}; line-height: 1.45; }}
+  .finding .go {{ font-size: 0.78rem; color: {MUTED}; margin-top: 8px; }}
 
-    /* Selectbox — dark background, white text, blue border */
-    section[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div {
-        background-color: #0f2744 !important;
-        border-color: #60a5fa !important;
-        color: #ffffff !important;
-    }
-    section[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] svg {
-        fill: #ffffff !important;
-    }
+  /* Cards: every st.container(border=True) becomes a white rounded card */
+  div[data-testid="stVerticalBlockBorderWrapper"],
+  div[data-testid="stVerticalBlock"][class*="border"] {{
+      background: {CARD}; border-radius: 14px !important; border-color: rgba(11,11,11,0.07) !important;
+      box-shadow: 0 1px 3px rgba(16,24,40,0.05); }}
 
-    /* Radio buttons */
-    section[data-testid="stSidebar"] .stRadio div { color: #ffffff !important; }
-    /* Hide duplicate slider min/max labels */
-    div[data-testid="stSliderTickBar"] {
-        display: none;
-    }
-</style>
-""", unsafe_allow_html=True)
+  /* KPI tiles */
+  .kpi {{ background: {CARD}; border: 1px solid rgba(11,11,11,0.07); border-radius: 14px;
+          padding: 14px 16px; box-shadow: 0 1px 3px rgba(16,24,40,0.05); height: 100%; }}
+  .kpi-value {{ font-size: 1.6rem; font-weight: 650; color: {INK}; line-height: 1.2; }}
+  .kpi-label {{ font-size: 0.82rem; color: {INK_2}; margin-top: 2px; }}
+  .kpi-note  {{ font-size: 0.74rem; color: {MUTED}; }}
 
+  .chart-title {{ font-weight: 650; color: {INK}; font-size: 1.02rem; }}
+  .chart-sub {{ color: {INK_2}; font-size: 0.84rem; margin: 2px 0 6px 0; }}
 
-# ── Cached data loading functions ─────────────────────────────────────────────
-# @st.cache_data caches the return value so the function only re-runs when
-# the data changes (or after ttl seconds). Without caching, the database would
-# be re-queried on every user interaction, making the dashboard slow.
-
-@st.cache_data(ttl=300)  # cache for 5 minutes (300 seconds)
-def load_jobs():
-    """
-    Loads all job records from SQLite into a pandas DataFrame.
-    Also parses the skills column (stored as a JSON string) into a Python list,
-    and converts the date_posted column from a string to a datetime object.
-    Both conversions are needed by the charts and filters below.
-    """
-    conn = sqlite3.connect(DB)
-    df = pd.read_sql("SELECT * FROM jobs", conn)
-    conn.close()
-    # skills is stored as a JSON string like '["Python", "SQL", "AWS"]'
-    # json.loads converts it back to a Python list for easy processing
-    df["skills_list"] = df["skills"].apply(lambda s: json.loads(s) if s else [])
-    # Convert "2024-03-15" string to a proper datetime for date comparisons
-    df["date_posted"] = pd.to_datetime(df["date_posted"])
-    return df
+  /* Tabs: larger, spaced labels */
+  button[data-baseweb="tab"] p {{ font-size: 0.98rem; font-weight: 550; }}
+  div[data-baseweb="tab-list"] {{ gap: 18px; }}
+  section[data-testid="stSidebar"] {{ background: #ffffff; }}
+  .footer {{ text-align: center; color: {MUTED}; font-size: 0.82rem; margin: 28px 0 8px; }}
+  .footer a {{ color: {INK_2}; }}
+</style>""", unsafe_allow_html=True)
 
 
-@st.cache_data(ttl=300)
-def load_aggregated():
-    """
-    Runs SQL queries with GROUP BY, HAVING, and CASE statements to pre-compute
-    global market statistics. These are used for charts that show overall trends
-    rather than filtered data.
-
-    We use SQL here instead of pandas because:
-    - It demonstrates proper use of SQL aggregation (relevant for data engineering roles)
-    - GROUP BY and HAVING in SQL are more efficient for these specific summaries
-    - The results are independent of the sidebar filters (global market view)
-
-    Returns three DataFrames:
-    - title_stats:       avg/min/max salary per job title
-    - location_stats:    posting count and avg salary per location (min 10 postings)
-    - experience_bands:  avg salary grouped into 4 experience bands
-    """
-    conn = sqlite3.connect(DB)
-
-    # Average, min, and max salary per job title across all records
-    title_stats = pd.read_sql("""
-        SELECT
-            title,
-            COUNT(*)                              AS postings,
-            ROUND(AVG(salary_avg), 0)             AS avg_salary,
-            ROUND(MIN(salary_avg), 0)             AS min_salary,
-            ROUND(MAX(salary_avg), 0)             AS max_salary,
-            ROUND(AVG(experience), 1)             AS avg_experience
-        FROM jobs
-        GROUP BY title
-        ORDER BY avg_salary DESC
-    """, conn)
-
-    # Top 12 locations by posting count; HAVING filters out locations with < 10 postings
-    # to avoid showing locations with just 1-2 records (statistically unreliable)
-    location_stats = pd.read_sql("""
-        SELECT
-            location,
-            COUNT(*)                                    AS postings,
-            ROUND(AVG(salary_avg), 0)                  AS avg_salary,
-            ROUND(SUM(remote) * 100.0 / COUNT(*), 1)   AS remote_pct
-        FROM jobs
-        GROUP BY location
-        HAVING COUNT(*) >= 10
-        ORDER BY postings DESC
-        LIMIT 12
-    """, conn)
-
-    # CASE statement groups continuous experience years into 4 readable bands.
-    # ORDER BY MIN(experience) sorts bands in logical order (0-2, 3-5, 6-9, 10+)
-    # instead of alphabetical order which would be wrong.
-    experience_bands = pd.read_sql("""
-        SELECT
-            CASE
-                WHEN experience <= 2  THEN '0-2 yrs'
-                WHEN experience <= 5  THEN '3-5 yrs'
-                WHEN experience <= 9  THEN '6-9 yrs'
-                ELSE                       '10+ yrs'
-            END                           AS band,
-            COUNT(*)                      AS postings,
-            ROUND(AVG(salary_avg), 0)     AS avg_salary
-        FROM jobs
-        GROUP BY band
-        ORDER BY MIN(experience)
-    """, conn)
-
-    conn.close()
-    return title_stats, location_stats, experience_bands
+# ══ Data loading (cached once per server process) ═════════════════════════════
+@st.cache_resource
+def load_jobs() -> pd.DataFrame:
+    jobs = pd.read_parquet(DATA)
+    jobs["title_lc"] = jobs["title"].str.lower()  # pre-lowered once for fast title search
+    return jobs
 
 
-@st.cache_resource  # cache_resource (not cache_data) is used for large objects like ML models
+@st.cache_resource
+def load_skills_long() -> pd.DataFrame:
+    """One row per (posting, skill): turns skill questions into fast group-bys."""
+    jobs = load_jobs()
+    long = jobs[["skills", "salary_mid", "role_family"]].explode("skills").dropna(subset=["skills"])
+    return long.rename(columns={"skills": "skill"}).rename_axis("row").reset_index()
+
+
+@st.cache_resource
 def load_model():
-    """
-    Loads the trained model from disk. Returns (None, None) if the model file
-    does not exist yet, so the dashboard can show a helpful message instead of crashing.
-
-    The model file contains a dict with:
-    - "model":        the fitted scikit-learn model object
-    - "model_name":   which model won the comparison (e.g. "Random Forest")
-    - "feature_cols": the exact list of column names the model was trained on
-    """
-    if not os.path.exists(MODEL):
+    if not MODEL.exists() or not META.exists():
         return None, None
-    with open(MODEL, "rb") as f:
-        obj = pickle.load(f)
-    # Load the companion JSON file with performance metrics and comparison results
-    meta = json.load(open(META)) if os.path.exists(META) else {}
-    return obj, meta
+    with MODEL.open("rb") as f:
+        bundle = pickle.load(f)
+    return bundle["model"], json.loads(META.read_text(encoding="utf-8"))
 
 
-# ── Sidebar filters ───────────────────────────────────────────────────────────
-# Everything inside "with st.sidebar:" renders in the left panel.
-# The user sets these values and they filter the dataset shown in the main area.
+@st.cache_resource
+def iso3_lookup() -> dict:
+    """Country name -> ISO-3 code for the world map.
+
+    Plotly's bundled gapminder table covers most countries; the rest of the
+    countries in this dataset are added by hand.
+    """
+    import plotly.express as px
+    table = px.data.gapminder()[["country", "iso_alpha"]].drop_duplicates()
+    lookup = dict(zip(table["country"], table["iso_alpha"]))
+    lookup.update({"United Arab Emirates": "ARE", "South Korea": "KOR", "Czechia": "CZE", "Ukraine": "UKR",
+                   "Hong Kong": "HKG", "Estonia": "EST", "Lithuania": "LTU", "Latvia": "LVA", "Slovakia": "SVK"})
+    return lookup
+
+
+@st.cache_resource
+def load_summary() -> dict:
+    return json.loads(SUMMARY.read_text(encoding="utf-8"))
+
+
+# ══ Small helpers ═════════════════════════════════════════════════════════════
+def usd(x: float) -> str:
+    """Compact dollars for chart labels: 123456 -> '$123k' (halves round up, e.g. 82,500 -> '$83k')."""
+    return f"${int(x / 1000 + 0.5):,}k"
+
+
+@contextmanager
+def card(title: str, subtitle: str = ""):
+    """White card with a title; everything inside the `with` block renders in it."""
+    with st.container(border=True):
+        st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+        if subtitle:
+            st.markdown(f'<div class="chart-sub">{subtitle}</div>', unsafe_allow_html=True)
+        yield
+
+
+def show(fig: go.Figure, table: pd.DataFrame | None = None):
+    """Render a chart, followed by its data as a collapsible table."""
+    st.plotly_chart(fig, width="stretch", config=PLOT_CONFIG)
+    if table is not None:
+        with st.expander("View data table"):
+            st.dataframe(table, width="stretch", hide_index=True)
+
+
+def kpi(col, value: str, label: str, note: str = ""):
+    col.markdown(f'<div class="kpi"><div class="kpi-value">{value}</div>'
+                 f'<div class="kpi-label">{label}</div><div class="kpi-note">{note}</div></div>',
+                 unsafe_allow_html=True)
+
+
+def ranked_bar(df: pd.DataFrame, value: str, label: str, hover: str, height: int, headroom: float = 1.18):
+    """Horizontal single-color bar chart, largest value on top.
+
+    An optional "_text" column is drawn at the bar ends. Every other column
+    (except the label) is passed to the tooltip as customdata, in column order,
+    so tooltips can show extra facts instead of repeating the visible label.
+    """
+    df = df.sort_values(value)
+    colors = np.where(df[label].astype(str).eq("Other"), AXIS, BLUE)  # catch-all group in gray
+    fig = go.Figure(go.Bar(
+        x=df[value], y=df[label], orientation="h", marker_color=colors,
+        text=df["_text"] if "_text" in df else None, textposition="outside",
+        textfont=dict(color=INK_2, size=12), cliponaxis=False,
+        customdata=df.drop(columns=[label, "_text"], errors="ignore"),
+        hovertemplate=hover + "<extra></extra>"))
+    fig.update_layout(height=height, yaxis=dict(gridcolor="rgba(0,0,0,0)"),
+                      xaxis=dict(range=[0, df[value].max() * headroom]))
+    return fig
+
+
+def salary_stats(df: pd.DataFrame, by: str) -> pd.DataFrame:
+    """Count, quartiles and median salary per group; small groups are dropped."""
+    g = df.dropna(subset=["salary_mid"]).groupby(by, observed=True)["salary_mid"]
+    stats = pd.DataFrame({"n": g.size(), "p25": g.quantile(0.25),
+                          "median": g.median(), "p75": g.quantile(0.75)}).reset_index()
+    return stats[stats["n"] >= MIN_GROUP]
+
+
+def median_iqr_chart(stats: pd.DataFrame, label: str, height: int):
+    """Median (dot) with the middle 50% of salaries (bar): typical pay AND spread."""
+    stats = stats.sort_values("median")
+    fig = go.Figure()
+    fig.add_bar(x=stats["p75"] - stats["p25"], base=stats["p25"], y=stats[label], orientation="h",
+                marker_color=BLUE_LIGHT, width=0.5, hoverinfo="skip")
+    fig.add_scatter(x=stats["median"], y=stats[label], mode="markers",
+                    marker=dict(color=BLUE, size=11, line=dict(color=CARD, width=2)),
+                    customdata=stats[["p25", "p75", "n"]],
+                    hovertemplate="Typical salary <b>%{x:$,.0f}</b><br>"
+                                  "Most pay between %{customdata[0]:$,.0f} and %{customdata[1]:$,.0f}<br>"
+                                  "Based on %{customdata[2]:,} postings<extra></extra>")
+    fig.update_layout(height=height, xaxis=dict(tickformat="$~s", title="Yearly salary (USD)"),
+                      yaxis=dict(gridcolor="rgba(0,0,0,0)"))
+    return fig
+
+
+def stats_table(stats: pd.DataFrame, label: str, name: str) -> pd.DataFrame:
+    out = stats[[label, "n", "p25", "median", "p75"]].sort_values("median", ascending=False)
+    out.columns = [name, "Salaried postings", "25th pct", "Median", "75th pct"]
+    for c in ["25th pct", "Median", "75th pct"]:
+        out[c] = out[c].map(lambda v: f"${v:,.0f}")
+    return out
+
+
+def finding(col, question: str, answer: str, detail: str, where: str):
+    """One 'question → answer' card in the Key findings section."""
+    col.markdown(f'<div class="finding"><div class="q">{question}</div><div class="a">{answer}</div>'
+                 f'<div class="d">{detail}</div><div class="go">→ {where}</div></div>', unsafe_allow_html=True)
+
+
+def key_findings():
+    """The project's story: six research questions, each answered from the full dataset.
+
+    Every number is computed here from the data and model results (nothing is
+    typed in by hand), so the answers stay correct if the data is rebuilt.
+    """
+    sal = all_salaried["salary_mid"]
+    fam = salary_stats(all_salaried[all_salaried["role_family"] != OTHER_FAMILY], "role_family")
+    top3 = fam.nlargest(3, "median")
+    sen = salary_stats(all_salaried, "seniority").set_index("seniority")["median"]
+    entry, principal = sen["Entry / Junior"], sen["Principal / Staff"]
+    listed = jobs.assign(listed=jobs["salary_status"].ne("no_salary")).groupby("country", observed=True)["listed"].mean()
+    effects = pd.DataFrame(meta["skill_effects"]).query("postings >= 300")["effect"] if meta else pd.Series([0.0])
+    remote = salary_stats(all_salaried, "remote").set_index("remote")["median"]
+    # Best-paid skill by raw median (skills with at least 100 salaried postings).
+    skill_pay = (skills_long.dropna(subset=["salary_mid"]).groupby("skill")["salary_mid"]
+                 .agg(["median", "size"]).query("size >= 100"))
+    best_skill, best_pay = skill_pay["median"].idxmax(), skill_pay["median"].max()
+
+    row1 = st.columns(3)
+    finding(row1[0], "1 · How much do these jobs pay?", f"{usd(sal.median())} typical salary",
+            f"Half of advertised salaries fall between {usd(sal.quantile(.25))} and {usd(sal.quantile(.75))} "
+            f"per year ({len(sal):,} postings with a yearly USD salary).", "Salaries tab")
+    finding(row1[1], "2 · Which jobs pay the most?", ", ".join(top3["role_family"]),
+            "Typical salaries of " + ", ".join(usd(v) for v in top3["median"]) +
+            f", against {usd(sal.median())} across all jobs.", "Salaries tab")
+    finding(row1[2], "3 · How much does seniority matter?", f"{principal / entry:.1f}× from entry to staff level",
+            f"Entry-level titles advertise {usd(entry)} typically; principal/staff titles {usd(principal)}.",
+            "Salaries tab")
+    st.write("")
+    row2 = st.columns(3)
+    finding(row2[0], "4 · Do skills raise pay?", "Less than the job and employer do",
+            f"Jobs asking for {best_skill} pay {usd(best_pay)} typically, but once title, company and city "
+            f"are accounted for, a single skill shifts pay by at most {effects.abs().max():.0%}.", "Skills tab")
+    finding(row2[1], "5 · Are employers open about pay?",
+            f"{jobs['salary_status'].ne('no_salary').mean():.0%} of postings show a salary",
+            f"It depends on the law: {listed['United States']:.0%} in the US and "
+            f"{listed['United Kingdom']:.0%} in the UK, but {listed['Germany']:.0%} in Germany and "
+            f"{listed['France']:.0%} in France. Remote jobs advertise {usd(remote[True])} typically vs "
+            f"{usd(remote[False])} on-site.", "Overview map")
+    if meta:
+        finding(row2[2], "6 · Can machine learning predict a salary?",
+                f"Yes, within {meta['test']['median_ape']:.0%} for a typical job",
+                f"On {meta['n_test']:,} jobs it never saw, the model explains {meta['test']['r2']:.0%} of the "
+                f"differences in pay (R² {meta['test']['r2']:.2f}). Job title and company matter most.",
+                "Salary predictor tab")
+
+
+def top_skill_by(df_rows: pd.Index, by: str) -> pd.Series:
+    """Most frequently requested skill within each group (e.g. each role family)."""
+    sk = skills_long[skills_long["row"].isin(df_rows)]
+    counts = sk.groupby([by, "skill"], observed=True).size().reset_index(name="n")
+    return counts.sort_values("n").groupby(by, observed=True).tail(1).set_index(by)["skill"]
+
+
+# ══ Load everything ═══════════════════════════════════════════════════════════
+jobs = load_jobs()
+skills_long = load_skills_long()
+model, meta = load_model()
+summary = load_summary()
+all_salaried = jobs.dropna(subset=["salary_mid"])
+
+# ══ Sidebar filters (apply to every tab except the ML predictor) ══════════════
 with st.sidebar:
-    st.markdown("## Filters")
-    df_all = load_jobs()  # full unfiltered dataset — always loaded for filter options
+    st.markdown("### Filters")
+    st.caption("Narrow every chart to the postings you care about.")
+    families = sorted(jobs["role_family"].cat.categories)
+    sel_family = st.multiselect("Role family", families, placeholder="All role families")
+    sel_seniority = st.multiselect("Seniority (from title)", SENIORITY_ORDER, placeholder="All levels")
+    top_countries = jobs["country"].value_counts().index[:40].tolist()
+    sel_country = st.selectbox("Country", ["All countries"] + top_countries)
+    sel_work = st.radio("Work arrangement", ["All", "Remote", "On-site"], horizontal=True)
+    sel_type = st.multiselect("Employment type", sorted(jobs["employment_type"].cat.categories),
+                              placeholder="All types")
 
-    # Dropdown to filter by a specific job title, or show all titles
-    title_opts = ["All"] + sorted(df_all["title"].unique().tolist())
-    sel_title  = st.selectbox("Job Title", title_opts)
+# Combine the filters into one boolean mask over all postings.
+mask = pd.Series(True, index=jobs.index)
+if sel_family:
+    mask &= jobs["role_family"].isin(sel_family)
+if sel_seniority:
+    mask &= jobs["seniority"].isin(sel_seniority)
+if sel_country != "All countries":
+    mask &= jobs["country"].eq(sel_country)
+if sel_work != "All":
+    mask &= jobs["remote"].eq(sel_work == "Remote")
+if sel_type:
+    mask &= jobs["employment_type"].isin(sel_type)
+df = jobs[mask]
+salaried = df.dropna(subset=["salary_mid"])
 
-    # Dropdown to filter by city/location
-    loc_opts = ["All"] + sorted(df_all["location"].unique().tolist())
-    sel_loc  = st.selectbox("Location", loc_opts)
+# ══ Header ════════════════════════════════════════════════════════════════════
+links_html = "".join(f'<a href="{url}" target="_blank">{name}</a>' for name, url in LINKS.items())
+# Key stats under the subtitle (all numbers come from the data files).
+stats = [(f"{summary['postings']:,}", "Job postings"), (f"{summary['companies']:,}", "Companies"),
+         (str(summary["countries"]), "Countries"), (f"{summary['usable_salaries']:,}", "Salaries analyzed")]
+if meta:
+    stats.append((f"{meta['test']['r2']:.2f}", "Model R²"))
+stats_html = "".join(f'<div class="stat"><div class="v">{v}</div><div class="l">{label}</div></div>'
+                     for v, label in stats)
+st.markdown(f"""
+<div class="masthead">
+  <div class="eyebrow">Job Market Analytics</div>
+  <h1>What <span class="num">{summary['postings']:,}</span> job postings reveal about pay, skills and hiring</h1>
+  <div class="sub">An analysis of open roles at {summary['companies']:,} companies in {summary['countries']} countries
+       ({pd.Timestamp(summary['posted_max']):%B %Y}), with a machine-learning model that estimates salaries.</div>
+  <div class="stats">{stats_html}</div>
+  <div class="author">{AUTHOR}</div>
+  <div class="links">{links_html}</div>
+</div>""", unsafe_allow_html=True)
 
-    # Radio button: show all jobs, only remote, or only on-site
-    remote_opt = st.radio("Work Type", ["All", "Remote", "On-site"])
+tab_overview, tab_salary, tab_skills, tab_explore, tab_model, tab_about = st.tabs(
+    ["Overview", "Salaries", "Skills", "Explore a role", "Salary predictor (ML)", "About the data"])
 
-    # Slider to set the minimum and maximum salary to show.
-    # The range is determined by the actual min/max in the database.
-    sal_min = int(df_all["salary_avg"].min())
-    sal_max = int(df_all["salary_avg"].max())
-    sel_sal = st.slider("Salary Range ($)", sal_min, sal_max, (sal_min, sal_max), step=5000)
-
-
-    # How many days back to show postings (default: last 30 days)
-    date_filter = st.selectbox(
-        "Date Range",
-        ["All time", "Last 7 days", "Last 30 days", "Last 60 days"]
-)
-
-
-# ── Apply filters ─────────────────────────────────────────────────────────────
-# Start from the full dataset and progressively narrow it down based on
-# what the user selected in the sidebar. All charts below use this filtered "df".
-df = df_all.copy()
-if sel_title != "All":
-    df = df[df["title"] == sel_title]
-if sel_loc != "All":
-    df = df[df["location"] == sel_loc]
-if remote_opt == "Remote":
-    df = df[df["remote"] == 1]
-elif remote_opt == "On-site":
-    df = df[df["remote"] == 0]
-df = df[(df["salary_avg"] >= sel_sal[0]) & (df["salary_avg"] <= sel_sal[1])]
-if date_filter != "All time":
-    days = {
-        "Last 7 days": 7,
-        "Last 30 days": 30,
-        "Last 60 days": 60
-    }[date_filter]
-
-    cutoff = datetime.now() - timedelta(days=days)
-    df = df[df["date_posted"] >= pd.Timestamp(cutoff)]
-
-# ── Page header ───────────────────────────────────────────────────────────────
-st.markdown("# Job Market Analytics Dashboard")
-st.markdown(
-    "*Market intelligence for Data Engineering and Analytics roles* &nbsp;|&nbsp; "
-    "Marc Abi Zeid Daou &nbsp;|&nbsp; "
-    "[Live Demo](https://job-market-analysis-ndmqelnezlfa64hyyhhwkv.streamlit.app) &nbsp;|&nbsp; "
-    "[GitHub](https://github.com/marcazdaou/Job-Market-Analysis)"
-)
-st.markdown("---")
-
-# Stop rendering if the filters result in zero records — avoids blank/broken charts
-if df.empty:
-    st.warning("No jobs match the selected filters. Try broadening your search.")
-    st.stop()
-
-# ── KPI metric cards ──────────────────────────────────────────────────────────
-# Four summary numbers at the top of the dashboard.
-# st.columns(4) creates four equal-width columns side by side.
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    # Total number of job postings matching the current filters
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-value">{len(df):,}</div>
-        <div class="metric-label">Total Postings</div>
-    </div>""", unsafe_allow_html=True)
-
-with col2:
-    # Average salary across all filtered postings
-    avg_sal = df["salary_avg"].mean()
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-value">${avg_sal:,.0f}</div>
-        <div class="metric-label">Average Salary</div>
-    </div>""", unsafe_allow_html=True)
-
-with col3:
-    # Percentage of filtered postings that allow remote work
-    remote_pct = df["remote"].mean() * 100
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-value">{remote_pct:.1f}%</div>
-        <div class="metric-label">Remote Positions</div>
-    </div>""", unsafe_allow_html=True)
-
-with col4:
-    # Number of unique company names in the filtered results
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-value">{df['company'].nunique()}</div>
-        <div class="metric-label">Companies Hiring</div>
-    </div>""", unsafe_allow_html=True)
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# ── Row 1: Salary by title + Top skills ──────────────────────────────────────
-col_a, col_b = st.columns(2)
-
-with col_a:
-    st.markdown('<div class="section-header">Average Salary by Job Title</div>', unsafe_allow_html=True)
-    # Group by title, compute mean salary, sort ascending so highest is at top of horizontal bar chart
-    sal_data = (
-        df.groupby("title")["salary_avg"]
-        .mean()
-        .sort_values(ascending=True)
-        .reset_index()
-    )
-    fig = px.bar(
-        sal_data, x="salary_avg", y="title", orientation="h",
-        color="salary_avg", color_continuous_scale="Blues",  # darker = higher salary
-        labels={"salary_avg": "Avg Salary ($)", "title": ""},
-        template="plotly_dark"
-    )
-    fig.update_layout(
-        height=420, showlegend=False, coloraxis_showscale=False,
-        margin=dict(l=0, r=10, t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-    )
-    fig.update_traces(marker_line_width=0)  # remove bar outlines for a cleaner look
-    st.plotly_chart(fig, use_container_width=True)
-
-with col_b:
-    st.markdown('<div class="section-header">Top In-Demand Skills</div>', unsafe_allow_html=True)
-    # Flatten all skills from all filtered jobs into one big list, then count occurrences.
-    # The list comprehension loops over each row's skills_list and extends a flat list.
-    all_skills = [s for sl in df["skills_list"] for s in sl]
-    skill_counts = Counter(all_skills).most_common(20)  # top 20 most common skills
-    skill_df = pd.DataFrame(skill_counts, columns=["skill", "count"])
-    fig2 = px.bar(
-        skill_df, x="count", y="skill", orientation="h",
-        color_discrete_sequence=["#a78bfa"],  # single color so all bars are equally visible
-        labels={"count": "Job Postings", "skill": ""},
-        template="plotly_dark"
-    )
-    fig2.update_layout(
-        height=420, showlegend=False,
-        margin=dict(l=0, r=10, t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-    )
-    st.plotly_chart(fig2, use_container_width=True)
-
-# ── Row 2: Location + Salary distribution ─────────────────────────────────────
-col_c, col_d = st.columns(2)
-
-with col_c:
-    st.markdown('<div class="section-header">Postings by Location</div>', unsafe_allow_html=True)
-    # Group by location, count postings and compute average salary per location.
-    # Color each bar by average salary so you can see which cities pay more.
-    loc_data = (
-        df.groupby("location")
-        .agg(count=("id", "count"), avg_salary=("salary_avg", "mean"))
-        .reset_index()
-        .sort_values("count", ascending=False)
-        .head(12)  # only show top 12 to avoid crowding the x-axis
-    )
-    fig3 = px.bar(
-        loc_data, x="location", y="count",
-        color="avg_salary", color_continuous_scale="Teal",
-        labels={"count": "Postings", "location": "", "avg_salary": "Avg Salary ($)"},
-        template="plotly_dark"
-    )
-    fig3.update_layout(
-        height=360,
-        margin=dict(l=0, r=10, t=10, b=60),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis_tickangle=-35  # angle the labels so they don't overlap
-    )
-    st.plotly_chart(fig3, use_container_width=True)
-
-with col_d:
-    st.markdown('<div class="section-header">Salary Distribution</div>', unsafe_allow_html=True)
-    # Histogram showing how salaries are distributed across all filtered postings.
-    # nbins=40 means we divide the salary range into 40 buckets.
-    fig4 = px.histogram(
-        df, x="salary_avg", nbins=40,
-        color_discrete_sequence=["#7c8dfc"],
-        labels={"salary_avg": "Annual Salary ($)"},
-        template="plotly_dark"
-    )
-    # Add a dashed vertical line at the mean salary for reference
-    fig4.add_vline(
-        x=df["salary_avg"].mean(), line_dash="dash", line_color="#f59e0b",
-        annotation_text=f"Mean: ${df['salary_avg'].mean():,.0f}",
-        annotation_position="top right"
-    )
-    fig4.update_layout(
-        height=360,
-        margin=dict(l=0, r=10, t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-    )
-    st.plotly_chart(fig4, use_container_width=True)
-
-# ── Row 3: Postings over time + Experience vs Salary ─────────────────────────
-col_e, col_f = st.columns(2)
-
-with col_e:
-    st.markdown('<div class="section-header">Postings Over Time</div>', unsafe_allow_html=True)
-    # Count how many jobs were posted on each date, then plot as an area chart.
-    # This shows whether the job market is growing or shrinking over the period.
-    time_df = df.groupby("date_posted").size().reset_index(name="count")
-    fig5 = px.area(
-        time_df, x="date_posted", y="count",
-        color_discrete_sequence=["#7c8dfc"],
-        labels={"date_posted": "Date", "count": "New Postings"},
-        template="plotly_dark"
-    )
-    fig5.update_layout(
-        height=320,
-        margin=dict(l=0, r=10, t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-    )
-    st.plotly_chart(fig5, use_container_width=True)
-
-with col_f:
-    st.markdown('<div class="section-header">Experience vs. Salary</div>', unsafe_allow_html=True)
-    # Scatter plot: each dot is one job posting.
-    # X = years of experience required, Y = salary.
-    # Color = job title, so you can see different roles' salary curves.
-    # We sample up to 500 points to keep the chart fast and readable.
-    fig6 = px.scatter(
-        df.sample(min(500, len(df))),
-        x="experience", y="salary_avg",
-        color="title", size_max=8, opacity=0.7,
-        labels={"experience": "Years of Experience", "salary_avg": "Salary ($)", "title": "Role"},
-        template="plotly_dark"
-    )
-    fig6.update_layout(
-        height=320,
-        margin=dict(l=0, r=10, t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        legend=dict(font=dict(size=9))
-    )
-    st.plotly_chart(fig6, use_container_width=True)
-
-# ── Skill Salary Premium ──────────────────────────────────────────────────────
-st.markdown("---")
-st.markdown('<div class="section-header">Skill Salary Premium</div>', unsafe_allow_html=True)
-st.markdown(
-    "For each skill, the bar shows the average salary across all postings that require it. "
-    "Skills appearing in fewer than 30 postings are excluded to ensure statistical reliability."
-)
-
-# Build a flat list of (skill, salary) pairs — one row per skill per job posting.
-# Example: if a job requires Python and SQL and pays $130k,
-# we add {"skill": "Python", "salary": 130000} and {"skill": "SQL", "salary": 130000}.
-skill_salary_rows = [
-    {"skill": skill, "salary": row["salary_avg"]}
-    for _, row in df.iterrows()
-    for skill in row["skills_list"]
-]
-if skill_salary_rows:
-    skill_sal_df = pd.DataFrame(skill_salary_rows)
-    premium = (
-        skill_sal_df.groupby("skill")["salary"]
-        .agg(avg_salary="mean", count="count")
-        .reset_index()
-        .query("count >= 30")          # exclude rare skills (unreliable average)
-        .sort_values("avg_salary", ascending=True)
-        .tail(20)                      # show top 20 highest-paying skills
-    )
-    fig_prem = px.bar(
-        premium, x="avg_salary", y="skill", orientation="h",
-        color="avg_salary", color_continuous_scale="Greens",
-        labels={"avg_salary": "Avg Salary in Postings Requiring Skill ($)", "skill": ""},
-        template="plotly_dark"
-    )
-    fig_prem.update_layout(
-        height=480, showlegend=False, coloraxis_showscale=False,
-        margin=dict(l=0, r=10, t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-    )
-    st.plotly_chart(fig_prem, use_container_width=True)
-
-# ── Salary by Experience Band (SQL-aggregated global view) ────────────────────
-# This chart uses the pre-computed SQL aggregation from load_aggregated().
-# It is NOT filtered by the sidebar — it always shows the global dataset.
-# That is intentional: it gives a market-wide view of how salary grows with experience.
-_, _, experience_bands = load_aggregated()
-st.markdown('<div class="section-header">Salary by Experience Band</div>', unsafe_allow_html=True)
-st.markdown("Global market view — shows average salary across all postings grouped by experience level.")
-
-fig_bands = px.bar(
-    experience_bands, x="band", y="avg_salary",
-    color="avg_salary", color_continuous_scale="Blues",
-    text="postings",  # show posting count on top of each bar
-    labels={"band": "Experience Level", "avg_salary": "Average Salary ($)", "postings": "Postings"},
-    template="plotly_dark"
-)
-fig_bands.update_traces(texttemplate="%{text} postings", textposition="outside")
-fig_bands.update_layout(
-    height=320, showlegend=False, coloraxis_showscale=False,
-    margin=dict(l=0, r=10, t=30, b=10),
-    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-)
-st.plotly_chart(fig_bands, use_container_width=True)
-
-# ── Salary Estimator ──────────────────────────────────────────────────────────
-st.markdown("---")
-st.markdown("## Salary Estimator")
-st.markdown("Enter a candidate profile to generate a salary estimate using the trained model.")
-
-model_obj, model_meta = load_model()
-
-# Display model performance metrics above the estimator form
-if model_meta:
-    best_name = model_meta.get("best_model", "Gradient Boosting")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Selected Model", best_name)
-    m2.metric("Test MAE", f"${model_meta.get('mae', 0):,.0f}")      # average dollar error on test set
-    m3.metric("Test R²", f"{model_meta.get('r2', 0):.3f}")          # 1.0 = perfect, 0 = no better than mean
-    m4.metric("CV R²", f"{model_meta.get('cv_r2_mean', 0):.3f} +/- {model_meta.get('cv_r2_std', 0):.3f}")
-
-if model_obj:
-    model     = model_obj["model"]       # the fitted scikit-learn model
-    feat_cols = model_obj["feature_cols"]  # ordered list of feature names used during training
-
-    # st.form groups widgets so they only trigger a rerun when the submit button is clicked,
-    # not on every individual widget change
-    with st.form("predict_form"):
-        pc1, pc2, pc3 = st.columns(3)
-        with pc1:
-            p_title = st.selectbox("Job Title", sorted(df_all["title"].unique()))
-            p_exp   = st.slider("Years of Experience", 0, 15, 3)
-        with pc2:
-            p_loc    = st.selectbox("Location", sorted(df_all["location"].unique()))
-            p_remote = st.checkbox("Remote Position", value=False)
-        with pc3:
-            p_skills = st.multiselect(
-                "Skills",
-                options=sorted({s for sl in df_all["skills_list"] for s in sl}),
-                default=["Python", "SQL", "AWS"]
-            )
-
-        submitted = st.form_submit_button("Estimate Salary", use_container_width=True)
-
-    if submitted:
-        # Build the feature vector the model expects.
-        # Start with all zeros (assuming no skills, no location, etc.)
-        # then set the relevant fields to 1 or the actual value.
-        row = {c: 0 for c in feat_cols}
-        row["experience"]  = p_exp
-        row["remote"]      = int(p_remote)
-        row["skill_count"] = len(p_skills)
-
-        # Assign seniority score the same way train.py does
-        if any(x in p_title for x in ["Principal", "Staff"]):
-            row["seniority"] = 4
-        elif any(x in p_title for x in ["Senior", "Lead"]):
-            row["seniority"] = 3
+# ══ Overview ══════════════════════════════════════════════════════════════════
+with tab_overview:
+    st.markdown("### Key findings")
+    st.caption("Six questions this project set out to answer, using all postings (the sidebar filters "
+               "don't change these). The tabs explore each one in detail.")
+    key_findings()
+    st.write("")
+    st.markdown("### The market at a glance")
+    if df.empty:
+        st.warning("No postings match these filters.")
+    else:
+        if mask.all():
+            st.caption("Showing all postings. Use the sidebar filters to narrow every chart below.")
         else:
-            row["seniority"] = 2
+            st.caption(f"Showing {len(df):,} postings that match your sidebar filters.")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        kpi(c1, f"{len(df):,}", "Job postings")
+        kpi(c2, f"{df['company'].nunique():,}", "Hiring companies")
+        kpi(c3, f"{df['salary_status'].ne('no_salary').mean():.0%}", "Postings that show a salary")
+        kpi(c4, f"${salaried['salary_mid'].median():,.0f}" if len(salaried) else "—",
+            "Typical (median) salary", f"from {len(salaried):,} postings with a yearly USD salary")
+        kpi(c5, f"{df['remote'].mean():.0%}", "Remote postings")
+        st.write("")
 
-        # Turn on the location flag for the selected city (if it was in top 10 during training)
-        safe_loc = p_loc.replace(" ", "_").replace(",", "")
-        if f"loc_{safe_loc}" in row:
-            row[f"loc_{safe_loc}"] = 1
+        # World map: where postings are, and how often they state pay.
+        geo = (df.assign(listed=df["salary_status"].ne("no_salary"))
+               .groupby("country", observed=True)
+               .agg(postings=("title", "size"), listed=("listed", "mean"), remote=("remote", "mean"))
+               .reset_index())
+        geo = geo[geo["postings"] > 0]
+        geo["iso3"] = geo["country"].map(iso3_lookup())
+        country_pay = salary_stats(salaried, "country").set_index("country")["median"]
+        geo["median"] = geo["country"].map(country_pay)
+        geo["median_txt"] = geo["median"].map(lambda v: f"${v:,.0f}" if pd.notna(v) else "not enough USD data")
+        with card("Where are the jobs?",
+                  "Darker countries have more job postings. Hover over a country to see its number of postings, "
+                  "how many show a salary, how many are remote, and the typical salary."):
+            ticks = [10, 100, 1_000, 10_000, 100_000]
+            fig = go.Figure(go.Choropleth(
+                locations=geo["iso3"], locationmode="ISO-3", z=np.log10(geo["postings"]),
+                text=geo["country"],
+                colorscale=[[0, "#dbe8fa"], [0.5, "#5598e7"], [1, NAVY]], marker_line_color="white",
+                marker_line_width=0.5,
+                colorbar=dict(title=dict(text="Postings", font=dict(size=12, color=INK_2)), thickness=10,
+                              len=0.6, tickvals=np.log10(ticks), ticktext=[f"{t:,}" for t in ticks],
+                              tickfont=dict(color=MUTED, size=11), outlinewidth=0),
+                customdata=geo[["postings", "listed", "remote", "median_txt"]],
+                hovertemplate="<b>%{text}</b><br>%{customdata[0]:,} postings<br>"
+                              "%{customdata[1]:.0%} show a salary · %{customdata[2]:.0%} remote<br>"
+                              "Typical salary: %{customdata[3]}<extra></extra>"))
+            fig.update_geos(showframe=False, showcoastlines=False, projection_type="natural earth",
+                            landcolor="#f1f2f4", showland=True, showcountries=True, countrycolor="white",
+                            bgcolor=CARD, lataxis_range=[-58, 85])
+            fig.update_layout(height=430, margin=dict(l=0, r=0, t=0, b=0))
+            show(fig, geo[["country", "postings", "listed", "remote", "median"]]
+                 .sort_values("postings", ascending=False)
+                 .rename(columns={"country": "Country", "postings": "Postings", "listed": "Share listing pay",
+                                  "remote": "Share remote", "median": "Median USD salary"}))
 
-        # Turn on each selected skill's binary flag column
-        for sk in p_skills:
-            col_name = f"skill_{sk.replace(' ', '_').replace('-', '_')}"
-            if col_name in row:
-                row[col_name] = 1
+        left, right = st.columns(2)
+        with left:
+            # Role mix, with pay / remote share / top skill in the tooltip.
+            prof = (df.groupby("role_family", observed=True)
+                    .agg(postings=("title", "size"), remote=("remote", "mean")).reset_index())
+            prof = prof[prof["postings"] > 0]
+            prof["share"] = prof["postings"] / prof["postings"].sum()
+            # Titles that match no job type are left out of the chart (their share is stated instead).
+            other_share = prof.loc[prof["role_family"] == OTHER_FAMILY, "share"].sum()
+            prof = prof[prof["role_family"] != OTHER_FAMILY]
+            prof["median"] = prof["role_family"].map(salaried.groupby("role_family", observed=True)["salary_mid"]
+                                                     .median()).map(lambda v: usd(v) if pd.notna(v) else "n/a")
+            prof["skill"] = prof["role_family"].map(top_skill_by(df.index, "role_family")).fillna("n/a")
+            prof["_text"] = prof["share"].map(lambda v: f"{v:.0%}")
+            prof = prof[["role_family", "postings", "share", "median", "remote", "skill", "_text"]]
+            with card("Which types of jobs are in demand?",
+                      "Each bar is a type of job; the % is its share of all postings. Hover to see typical pay, "
+                      f"% remote, and the skill employers ask for most. The {other_share:.0%} of postings whose "
+                      "title fits no job type (mostly non-English or very generic titles) are not shown."):
+                fig = ranked_bar(prof, "postings", "role_family",
+                                 "%{x:,} postings<br>Typical salary: %{customdata[2]}<br>"
+                                 "Remote: %{customdata[3]:.0%}<br>Most-asked skill: %{customdata[4]}", 520)
+                fig.update_layout(xaxis=dict(title="Number of job postings"))
+                show(fig, prof.drop(columns="_text").rename(columns={
+                    "role_family": "Role family", "postings": "Postings", "share": "Share",
+                    "median": "Median salary", "remote": "Share remote", "skill": "Top skill"}))
+        with right:
+            # Companies: hiring volume vs. pay. Name is only shown on hover (too many to label).
+            comp = salary_stats(salaried, "company")
+            comp = comp.merge(df.groupby("company").size().rename("postings"), left_on="company",
+                              right_index=True)
+            comp = comp.nlargest(60, "n")
+            comp["family"] = comp["company"].map(salaried.groupby("company")["role_family"]
+                                                 .agg(lambda s: s.mode().iat[0]))
+            label_top = comp.nlargest(4, "median")["company"]  # label only the four best payers
+            with card("Which companies hire the most, and which pay the most?",
+                      "Each bubble is a company. Further right = more job postings; higher up = better typical pay; "
+                      "bigger bubble = more postings that show a salary. Hover for the company name."):
+                fig = go.Figure(go.Scatter(
+                    x=comp["postings"], y=comp["median"], mode="markers+text",
+                    text=np.where(comp["company"].isin(label_top), comp["company"], ""),
+                    textposition="top center", textfont=dict(size=11, color=INK_2),
+                    marker=dict(size=np.sqrt(comp["n"]) * 1.4 + 6, color=BLUE, opacity=0.55,
+                                line=dict(color=CARD, width=1.5)),
+                    customdata=comp[["company", "n", "p25", "p75", "family"]],
+                    hovertemplate="<b>%{customdata[0]}</b><br>%{x:,} postings · typical pay %{y:$,.0f}<br>"
+                                  "Most pay between %{customdata[2]:$,.0f} and %{customdata[3]:$,.0f}<br>"
+                                  "Mostly hiring: %{customdata[4]}<extra></extra>"))
+                # Log scale spreads out companies with few vs. many postings; ticks are spelled out.
+                ticks = [50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000]
+                fig.update_layout(height=520, xaxis=dict(type="log", title="Number of job postings (log scale)",
+                                                         tickvals=ticks, ticktext=[f"{t:,}" for t in ticks]),
+                                  yaxis=dict(tickformat="$~s", title="Typical (median) salary"))
+                show(fig, stats_table(comp, "company", "Company"))
 
-        # Convert to a DataFrame in the exact column order the model was trained on
-        X_input = pd.DataFrame([row])[feat_cols].fillna(0)
-        pred    = model.predict(X_input)[0]  # returns an array; [0] gets the single value
+# ══ Salaries ══════════════════════════════════════════════════════════════════
+with tab_salary:
+    if len(salaried) < MIN_GROUP:
+        st.warning(f"Fewer than {MIN_GROUP} postings with an annual USD salary match these filters.")
+    else:
+        st.caption("How to read these charts: a posting's salary is the middle of its advertised yearly range "
+                   "(e.g. \\$100k–\\$140k → \\$120k). “Typical” means the **median**: half of jobs pay more, half "
+                   f"pay less. Groups with fewer than {MIN_GROUP} postings are left out because they are too small.")
 
-        # Show three versions: the raw prediction plus +/- 10% bounds
-        res1, res2, res3 = st.columns(3)
-        res1.metric("Predicted Salary",       f"${pred:,.0f}")
-        res2.metric("Conservative Estimate",  f"${pred * 0.9:,.0f}")
-        res3.metric("Optimistic Estimate",    f"${pred * 1.1:,.0f}")
+        # Distribution with an interactive "where do I fall?" marker.
+        median = salaried["salary_mid"].median()
+        with card("How much do jobs pay?",
+                  f"Each bar counts job postings whose salary falls in a $10k band ({len(salaried):,} postings). "
+                  "The gray line marks the typical salary. Type a salary below to see how it ranks."):
+            mine = st.number_input("Compare a salary (USD per year)", min_value=0, value=120_000, step=5_000)
+            pct = (salaried["salary_mid"] < mine).mean()
+            fig = go.Figure(go.Histogram(
+                x=salaried["salary_mid"].clip(upper=500_000), xbins=dict(start=20_000, end=510_000, size=10_000),
+                marker=dict(color=BLUE, line=dict(color=CARD, width=1)),
+                hovertemplate="%{y:,} postings<extra></extra>"))
+            fig.add_vline(x=median, line_color=INK_2, line_width=1.5)
+            fig.add_annotation(x=median, y=1.0, yref="paper", yanchor="bottom", showarrow=False,
+                               text=f"Typical salary {usd(median)}", font=dict(color=INK, size=12))
+            if mine:
+                fig.add_vline(x=min(mine, 500_000), line_color=ORANGE, line_width=2)
+                fig.add_annotation(x=min(mine, 500_000), y=0.85, yref="paper", showarrow=False, xanchor="left",
+                                   xshift=6, text=f"{usd(mine)} pays more than {pct:.0%} of jobs",
+                                   font=dict(color=INK, size=12), bgcolor="rgba(255,255,255,0.85)")
+            fig.update_layout(height=340, bargap=0.04, margin=dict(t=28),
+                              xaxis=dict(tickformat="$~s", title="Yearly salary (USD)"),
+                              yaxis=dict(title="Number of job postings"))
+            quantiles = salaried["salary_mid"].quantile([0.1, 0.25, 0.5, 0.75, 0.9])
+            show(fig, pd.DataFrame({"Percentile": ["10th", "25th", "50th (median)", "75th", "90th"],
+                                    "Annual salary": [f"${v:,.0f}" for v in quantiles]}))
 
-        # Skill gap analysis: find the top 10 most common skills across all jobs
-        # and highlight which ones the user did not select
-        all_sk  = [s for sl in df_all["skills_list"] for s in sl]
-        top_sk  = [s for s, _ in Counter(all_sk).most_common(10)]
-        missing = [s for s in top_sk if s not in p_skills]
-        if missing:
-            st.info(f"High-demand skills not in profile: **{', '.join(missing[:5])}**")
+        left, right = st.columns(2)
+        with left:
+            stats = salary_stats(salaried[salaried["role_family"] != OTHER_FAMILY], "role_family")
+            with card("Typical pay by type of job",
+                      "Dot = typical (median) salary. Light bar = the range where the middle half of salaries "
+                      "fall, so a longer bar means pay varies more."):
+                show(median_iqr_chart(stats, "role_family", 520), stats_table(stats, "role_family", "Role family"))
+        with right:
+            stats = salary_stats(salaried, "seniority")
+            stats["seniority"] = stats["seniority"].astype(str)
+            stats["order"] = stats["seniority"].map(SENIORITY_ORDER.index)
+            stats = stats.sort_values("order")
+            stats["label"] = stats["seniority"].str.replace(" / ", "<br>")
+            # % change versus the previous level, shown in the tooltip.
+            stats["step"] = stats["median"].pct_change().map(lambda v: f"{v:+.0%} vs. previous level"
+                                                             if pd.notna(v) else "starting level")
+            with card("How pay grows with seniority",
+                      "Typical salary at each career level. The level comes from words in the job title "
+                      "(e.g. 'Junior', 'Senior', 'Staff', 'Director')."):
+                fig = go.Figure(go.Bar(
+                    x=stats["label"], y=stats["median"], marker_color=[BLUE_RAMP[i] for i in stats["order"]],
+                    text=stats["median"].map(usd), textposition="outside", cliponaxis=False,
+                    textfont=dict(color=INK_2), customdata=stats[["p25", "p75", "n", "step"]],
+                    hovertemplate="%{customdata[3]}<br>Most pay between %{customdata[0]:$,.0f} and "
+                                  "%{customdata[1]:$,.0f}<br>%{customdata[2]:,} postings<extra></extra>"))
+                fig.update_layout(height=520, margin=dict(t=24),
+                                  yaxis=dict(tickformat="$~s", title="Typical (median) salary"),
+                                  xaxis=dict(gridcolor="rgba(0,0,0,0)", categoryorder="array",
+                                             categoryarray=stats["label"].tolist(), tickangle=0))
+                show(fig, stats_table(stats, "seniority", "Seniority"))
 
-    # ── Model Comparison chart ────────────────────────────────────────────────
-    # Shows how all three candidate models performed so the viewer can see why
-    # the winning model was chosen. Data comes from model_meta.json.
-    comparison = model_meta.get("model_comparison") if model_meta else None
-    if comparison:
-        st.markdown("---")
-        st.markdown("### Model Comparison")
+        # Remote vs. on-site pay, per role family (dumbbell chart).
+        g = salaried.groupby(["role_family", "remote"], observed=True)["salary_mid"].agg(["median", "size"])
+        gap = g["median"].unstack().rename(columns={True: "remote", False: "onsite"})
+        sizes = g["size"].unstack()
+        gap = gap[(sizes >= MIN_GROUP).all(axis=1)].dropna().reset_index()
+        gap = gap[gap["role_family"] != OTHER_FAMILY]
+        if len(gap):
+            gap["diff"] = gap["remote"] / gap["onsite"] - 1
+            gap = gap.sort_values("diff")
+            with card("Do remote jobs pay less than on-site jobs?",
+                      "For each type of job: blue dot = typical remote salary, orange dot = typical on-site salary. "
+                      "The gray line between them is the pay gap. A gap can also reflect a different mix of jobs "
+                      "(e.g. remote healthcare postings are mostly senior clinicians), not only the work arrangement."):
+                fig = go.Figure()
+                for _, r in gap.iterrows():  # grey connector per role family
+                    fig.add_scatter(x=[r["onsite"], r["remote"]], y=[r["role_family"]] * 2, mode="lines",
+                                    line=dict(color=AXIS, width=3), hoverinfo="skip", showlegend=False)
+                fig.add_scatter(x=gap["onsite"], y=gap["role_family"], mode="markers", name="On-site",
+                                marker=dict(color=ORANGE, size=12, line=dict(color=CARD, width=2)),
+                                customdata=gap[["diff"]],
+                                hovertemplate="On-site: %{x:$,.0f}<extra></extra>")
+                fig.add_scatter(x=gap["remote"], y=gap["role_family"], mode="markers", name="Remote",
+                                marker=dict(color=BLUE, size=12, line=dict(color=CARD, width=2)),
+                                customdata=gap[["diff"]],
+                                hovertemplate="Remote: %{x:$,.0f}<br>%{customdata[0]:+.0%} compared with on-site"
+                                              "<extra></extra>")
+                fig.update_layout(height=max(320, 34 * len(gap)), showlegend=True,
+                                  xaxis=dict(tickformat="$~s", title="Typical (median) salary"),
+                                  yaxis=dict(gridcolor="rgba(0,0,0,0)"), margin=dict(t=36))
+                show(fig, gap.assign(diff=gap["diff"].map(lambda v: f"{v:+.1%}"))
+                     .rename(columns={"role_family": "Role family", "remote": "Remote median",
+                                      "onsite": "On-site median", "diff": "Remote vs. on-site"}))
+
+        left, right = st.columns(2)
+        with left:
+            stats = salary_stats(salaried.dropna(subset=["city"]), "city").nlargest(15, "n")
+            with card("Typical pay in the 15 cities with the most jobs",
+                      "Dot = typical salary · light bar = range of the middle half of salaries"):
+                show(median_iqr_chart(stats, "city", 480), stats_table(stats, "city", "City"))
+        with right:
+            stats = salary_stats(salaried.dropna(subset=["industry"]), "industry").nlargest(15, "n")
+            with card("Typical pay in the 15 industries with the most jobs",
+                      "Dot = typical salary · light bar = range of the middle half of salaries"):
+                show(median_iqr_chart(stats, "industry", 480), stats_table(stats, "industry", "Industry"))
+
+# ══ Skills ════════════════════════════════════════════════════════════════════
+with tab_skills:
+    sk = skills_long[skills_long["row"].isin(df.index)]
+    if sk.empty:
+        st.warning("No skills found for these filters.")
+    else:
+        overall_median = salaried["salary_mid"].median()
+
+        # Interactive skill explorer.
+        with card("Skill explorer", "Choose a skill to see how often employers ask for it, what those jobs pay, "
+                                    "and which other skills usually come with it."):
+            counts = sk["skill"].value_counts()
+            choices = counts.index[:120].tolist()
+            skill = st.selectbox("Skill", choices, index=choices.index("python") if "python" in choices else 0)
+            rows = sk.loc[sk["skill"] == skill, "row"]
+            with_skill = jobs.loc[rows]
+            pay = with_skill["salary_mid"].median()
+            k1, k2, k3, k4 = st.columns(4)
+            kpi(k1, f"{len(rows):,}", f"Job postings asking for {skill}", f"{len(rows) / len(df):.1%} of all postings")
+            kpi(k2, f"${pay:,.0f}" if pd.notna(pay) else "—", "Typical salary of these jobs",
+                f"from {with_skill['salary_mid'].notna().sum():,} postings with a salary")
+            kpi(k3, f"{pay / overall_median - 1:+.0%}" if pd.notna(pay) else "—", "Compared with all jobs",
+                f"all jobs: {usd(overall_median)}")
+            kpi(k4, f"{with_skill['remote'].mean():.0%}", "Of these jobs are remote")
+            st.write("")
+
+            a, b = st.columns(2)
+            with a:
+                # Co-occurrence: of the postings that list the skill, what share also list each other skill?
+                pairs = sk[sk["row"].isin(rows) & sk["skill"].ne(skill)]
+                paired = (pairs["skill"].value_counts().head(12) / len(rows)).rename_axis("skill") \
+                    .reset_index(name="share")
+                paired["_text"] = paired["share"].map(lambda v: f"{v:.0%}")
+                st.markdown(f"**Skills most often asked for together with {skill}**")
+                fig = ranked_bar(paired, "share", "skill",
+                                 f"%{{x:.0%}} of jobs asking for {skill} also ask for this", 400)
+                fig.update_layout(xaxis=dict(tickformat=".0%", title=f"% of {skill} jobs"))
+                show(fig)
+            with b:
+                roles = with_skill["role_family"].value_counts().drop(OTHER_FAMILY, errors="ignore").head(8)
+                roles = (roles / len(rows)).rename_axis("family").reset_index(name="share")
+                roles["_text"] = roles["share"].map(lambda v: f"{v:.0%}")
+                st.markdown(f"**Types of jobs that ask for {skill}**")
+                fig = ranked_bar(roles, "share", "family", f"%{{x:.0%}} of jobs asking for {skill}", 400)
+                fig.update_layout(xaxis=dict(tickformat=".0%", title=f"% of {skill} jobs"))
+                show(fig)
+
+        left, right = st.columns(2)
+        with left:
+            demand = counts.head(20).rename_axis("skill").reset_index(name="postings")
+            demand["share"] = demand["postings"] / len(df)
+            skill_pay = sk.groupby("skill")["salary_mid"].median()
+            demand["median"] = demand["skill"].map(skill_pay).map(lambda v: usd(v) if pd.notna(v) else "n/a")
+            demand["_text"] = demand["share"].map(lambda v: f"{v:.1%}")
+            with card("Most requested skills", "The % is the share of all job postings that mention the skill."):
+                fig = ranked_bar(demand, "postings", "skill",
+                                 "%{x:,} postings<br>Typical salary of these jobs: %{customdata[2]}", 560)
+                fig.update_layout(xaxis=dict(title="Number of job postings"))
+                show(fig, demand.drop(columns="_text").rename(columns={
+                    "skill": "Skill", "postings": "Postings", "share": "Share", "median": "Median salary"}))
+        with right:
+            pay = (sk.dropna(subset=["salary_mid"]).groupby("skill")["salary_mid"]
+                   .agg(median="median", n="size").reset_index())
+            pay = pay[pay["n"] >= 100].nlargest(20, "median")
+            pay["premium"] = pay["median"] / overall_median - 1
+            pay["_text"] = pay["median"].map(usd)
+            with card("Skills found in the best-paying jobs",
+                      "Typical salary of job postings that list each skill (skills with at least 100 postings)."):
+                fig = ranked_bar(pay, "median", "skill", "%{customdata[2]:+.0%} compared with all jobs<br>"
+                                 "Based on %{customdata[1]:,} postings", 560)
+                fig.update_layout(xaxis=dict(tickformat="$~s", title="Typical (median) salary"))
+                show(fig, pay.drop(columns="_text").rename(columns={
+                    "skill": "Skill", "median": "Median salary", "n": "Salaried postings", "premium": "Premium"}))
+
+        if meta and meta.get("skill_effects"):
+            effects = pd.DataFrame(meta["skill_effects"])
+            effects = effects[effects["postings"] >= 300]
+            effects = pd.concat([effects.nlargest(10, "effect"), effects.nsmallest(10, "effect")])
+            effects = effects.drop_duplicates("skill").sort_values("effect")
+            with card("How much does a single skill change pay? (machine-learning estimate)",
+                      "Compares otherwise identical jobs (same title, company and city) with and without the skill. "
+                      "Blue = skill comes with higher pay, red = lower. The effects are small: the job and the "
+                      "employer matter far more than any one skill."):
+                fig = go.Figure(go.Bar(
+                    x=effects["effect"], y=effects["skill"], orientation="h",
+                    marker_color=np.where(effects["effect"] >= 0, BLUE, RED),
+                    text=effects["effect"].map(lambda v: f"{v:+.1%}"), textposition="outside",
+                    textfont=dict(color=INK_2, size=12), cliponaxis=False, customdata=effects[["postings"]],
+                    hovertemplate="Estimated from %{customdata[0]:,} postings<extra></extra>"))
+                fig.add_vline(x=0, line_color=AXIS, line_width=1)
+                reach = effects["effect"].abs().max() * 1.35
+                fig.update_layout(height=560, yaxis=dict(gridcolor="rgba(0,0,0,0)"),
+                                  xaxis=dict(tickformat="+.0%", title="Change in salary when the skill is listed",
+                                             range=[-reach, reach]))
+                show(fig, effects.sort_values("effect", ascending=False)
+                     .assign(effect=lambda d: d["effect"].map(lambda v: f"{v:+.2%}"))
+                     .rename(columns={"skill": "Skill", "effect": "Effect", "postings": "Postings"}))
+
+# ══ Explore a role ════════════════════════════════════════════════════════════
+with tab_explore:
+    st.markdown("Type a job title to see its pay, skills and top-paying companies. Add a second title to "
+                "compare them side by side (**blue** = first title, **orange** = second).")
+    q1, q2 = st.columns(2)
+    query_a = q1.text_input("Job title", "data engineer").strip().lower()
+    query_b = q2.text_input("Compare with (optional)", "software engineer").strip().lower()
+    queries = [(query_a, BLUE)] + ([(query_b, ORANGE)] if query_b else [])
+    matches = {q: df[df["title_lc"].str.contains(q, regex=False)] for q, _ in queries if q}
+
+    if not query_a or matches[query_a].empty:
+        st.warning("No postings match that title. Try a broader phrase, e.g. 'analyst'.")
+    else:
+        # One KPI row per searched title.
+        for q, color in queries:
+            m = matches.get(q)
+            if m is None or m.empty:
+                continue
+            sal = m["salary_mid"].dropna()
+            st.markdown(f'<span style="color:{color};font-weight:700">●</span> **“{q}”**', unsafe_allow_html=True)
+            k1, k2, k3, k4, k5 = st.columns(5)
+            kpi(k1, f"{len(m):,}", "Job postings")
+            kpi(k2, f"${sal.median():,.0f}" if len(sal) else "—", "Typical salary", f"from {len(sal):,} postings")
+            kpi(k3, f"{usd(sal.quantile(.25))} – {usd(sal.quantile(.75))}" if len(sal) >= 4 else "—",
+                "Most jobs pay between", "middle half of salaries")
+            kpi(k4, f"{m['remote'].mean():.0%}", "Remote jobs")
+            kpi(k5, f"{m['company'].nunique():,}", "Companies hiring")
+            st.write("")
+
+        left, right = st.columns(2)
+        with left:
+            with card("How the salaries compare",
+                      "Each bar shows the % of that title's job postings paying within a $20k band. "
+                      "Where the colors overlap, both titles pay similarly."):
+                fig = go.Figure()
+                for q, color in queries:
+                    sal = matches.get(q, pd.DataFrame(columns=["salary_mid"]))["salary_mid"].dropna()
+                    if len(sal):
+                        fig.add_histogram(x=sal.clip(upper=500_000), name=f"“{q}”", histnorm="percent",
+                                          xbins=dict(start=20_000, end=520_000, size=20_000),
+                                          marker=dict(color=color, line=dict(color=CARD, width=1)), opacity=0.7,
+                                          hovertemplate="%{y:.1f}% of postings<extra>%{fullData.name}</extra>")
+                fig.update_layout(barmode="overlay", height=400, showlegend=True, margin=dict(t=36),
+                                  xaxis=dict(tickformat="$~s", title="Yearly salary (USD)"),
+                                  yaxis=dict(title="% of job postings", ticksuffix="%"))
+                show(fig)
+        with right:
+            with card("Skills each title asks for",
+                      "% of each title's job postings that mention the skill"):
+                frames = []
+                for q, _ in queries:
+                    m = matches.get(q)
+                    if m is not None and len(m):
+                        s = skills_long[skills_long["row"].isin(m.index)]["skill"].value_counts() / len(m)
+                        frames.append(s.rename(q))
+                both = pd.concat(frames, axis=1).fillna(0)
+                both = both.loc[both[query_a].nlargest(10).index].iloc[::-1]
+                fig = go.Figure()
+                for q, color in queries[::-1]:  # reversed so the first title's bars sit on top
+                    if q in both:
+                        fig.add_bar(x=both[q], y=both.index, orientation="h", name=f"“{q}”", marker_color=color,
+                                    hovertemplate="%{x:.0%} of postings<extra>%{fullData.name}</extra>")
+                fig.update_layout(barmode="group", height=400, showlegend=True, bargap=0.25, bargroupgap=0.08,
+                                  xaxis=dict(tickformat=".0%", title="% of job postings"),
+                                  yaxis=dict(gridcolor="rgba(0,0,0,0)"), margin=dict(t=36),
+                                  legend=dict(traceorder="reversed"))
+                show(fig)
+
+        m = matches[query_a]
+        top_pay = (m.dropna(subset=["salary_mid"]).groupby("company")["salary_mid"]
+                   .agg(median="median", n="size").reset_index().query("n >= 3").nlargest(12, "median"))
+        left, right = st.columns(2)
+        with left:
+            with card(f"Best-paying companies for “{query_a}”",
+                      "Typical salary at each company (companies with at least 3 postings that show a salary)"):
+                if top_pay.empty:
+                    st.info("Not enough salaried postings per company for this title.")
+                else:
+                    top_pay["_text"] = top_pay["median"].map(usd)
+                    fig = ranked_bar(top_pay, "median", "company", "Based on %{customdata[1]:,} postings", 420)
+                    fig.update_layout(xaxis=dict(tickformat="$~s", title="Typical (median) salary"))
+                    show(fig)
+        with right:
+            with card(f"Most recent “{query_a}” postings", "Click “open” to view the original job posting"):
+                st.dataframe(m.sort_values("posted", ascending=False)
+                             [["title", "company", "location", "salary_mid", "posted", "url"]].head(200),
+                             width="stretch", hide_index=True, height=420,
+                             column_config={"title": st.column_config.TextColumn("Title", width="medium"),
+                                            "company": "Company", "location": "Location",
+                                            "salary_mid": st.column_config.NumberColumn("Salary (mid)", format="$%d"),
+                                            "posted": st.column_config.DateColumn("Posted"),
+                                            "url": st.column_config.LinkColumn("Posting", display_text="open")})
+
+# ══ Salary predictor ══════════════════════════════════════════════════════════
+with tab_model:
+    if model is None:
+        st.error("Model files are missing. Run `python models/train.py`.")
+    else:
+        test, unseen = meta["test"], meta["unseen_company_test"]
         st.markdown(
-            "Three regression models were trained and evaluated using 5-fold cross-validation. "
-            "The model with the highest mean CV R² was selected to prevent overfitting on the test set."
-        )
+            f"Describe a job and a machine-learning model, trained on {meta['n_deduplicated']:,} job postings "
+            "that show a salary, estimates what it pays. You also get a range: in testing, the real salary "
+            "landed inside this range 8 times out of 10.")
 
-        # Convert the nested comparison dict into a DataFrame for easy charting
-        comp_df = (
-            pd.DataFrame(comparison)
-            .T.reset_index()
-            .rename(columns={"index": "Model"})
-            .sort_values("cv_r2_mean", ascending=True)  # ascending so best model appears at top of horizontal bar
-        )
+        with st.form("estimator"):
+            a, b, c = st.columns(3)
+            title = a.text_input("Job title", "Senior Data Engineer")
+            companies = sorted(all_salaried["company"].value_counts().loc[lambda s: s >= 3].index)
+            company = a.selectbox("Company", ["Not listed"] + companies,
+                                  help="Companies with at least 3 salaried postings in the data.")
+            department = a.text_input("Department (optional)", "")
 
-        # Horizontal bar chart: one bar per model, length = CV R², error bars = CV std dev
-        fig_comp = px.bar(
-            comp_df, x="cv_r2_mean", y="Model", orientation="h",
-            error_x="cv_r2_std",  # error bars show how much scores varied across the 5 folds
-            color="cv_r2_mean", color_continuous_scale="Blues",
-            labels={"cv_r2_mean": "Mean CV R² Score", "Model": ""},
-            template="plotly_dark"
-        )
-        fig_comp.update_layout(
-            height=260, showlegend=False, coloraxis_showscale=False,
-            margin=dict(l=0, r=10, t=10, b=10),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-        )
-        st.plotly_chart(fig_comp, use_container_width=True)
+            city_counts = all_salaried["city"].value_counts()
+            cities = sorted(city_counts[city_counts >= 20].index)
+            city = b.selectbox("City", ["Not listed"] + cities,
+                               index=(cities.index("New York") + 1) if "New York" in cities else 0)
+            country = b.selectbox("Country (used when the city is not listed)",
+                                  ["United States"] + [x for x in top_countries if x != "United States"])
+            industries = sorted(jobs["industry"].dropna().unique())
+            industry = b.selectbox("Industry", ["Use company's industry"] + industries)
 
-        # Formatted table showing all metrics for all three models
-        display_comp = comp_df[["Model", "mae", "r2", "cv_r2_mean", "cv_r2_std", "train_time_s"]].copy()
-        display_comp.columns = ["Model", "MAE ($)", "R²", "CV R² Mean", "CV R² Std", "Train Time (s)"]
-        display_comp["MAE ($)"] = display_comp["MAE ($)"].apply(lambda x: f"${float(x):,.0f}")
-        st.dataframe(display_comp, use_container_width=True, hide_index=True)
+            employment = c.selectbox("Employment type", ["Full Time", "Part Time", "Contract", "Internship",
+                                                         "Temporary"])
+            remote = c.toggle("Remote", value=False)
+            all_skills = sorted(skills_long["skill"].unique())
+            skills = c.multiselect("Skills", all_skills,
+                                   default=[s for s in ["python", "sql", "aws"] if s in all_skills])
+            submitted = st.form_submit_button("Estimate salary", type="primary")
 
-else:
-    # Model files don't exist yet — tell the user what to run
-    st.info("Run `python models/train.py` to train the salary prediction model.")
+        if submitted and title.strip():
+            # Fill in country/industry from lookups learned at training time.
+            if city != "Not listed":
+                country = meta["city_country"].get(city, country)
+            if industry == "Use company's industry":
+                industry = meta["company_industry"].get(company)
+            row = pd.DataFrame([{
+                "title": title.strip(), "company": None if company == "Not listed" else company,
+                "industry": industry, "department": department.strip() or None, "country": country,
+                "city": None if city == "Not listed" else city, "employment_type": employment,
+                "remote": remote, "skills": skills}])
+            pred_log = float(model.predict(model_frame(row))[0])
+            low = np.exp(pred_log + meta["interval"]["log_low"])
+            high = np.exp(pred_log + meta["interval"]["log_high"])
+            fam, sen = role_family(title), seniority(title)
+            peers = all_salaried[(all_salaried["role_family"] == fam) & (all_salaried["seniority"] == sen)]
 
-# ── Raw data table ────────────────────────────────────────────────────────────
-# Collapsible section — hidden by default to avoid overwhelming the dashboard.
-# Shows the actual filtered rows so the user can inspect individual postings.
-st.markdown("---")
-with st.expander("View Raw Job Data"):
-    display_df = df[["title", "company", "location", "salary_avg", "experience", "remote", "date_posted"]].copy()
-    display_df["salary_avg"] = display_df["salary_avg"].apply(lambda x: f"${x:,.0f}")
-    display_df["remote"]     = display_df["remote"].map({1: "Yes", 0: "No"})
-    display_df.columns       = ["Title", "Company", "Location", "Avg Salary", "Experience (yrs)", "Remote", "Date Posted"]
-    st.dataframe(display_df.sort_values("Date Posted", ascending=False), use_container_width=True)
+            r1, r2, r3 = st.columns(3)
+            kpi(r1, f"${np.exp(pred_log):,.0f}", "Estimated salary per year")
+            kpi(r2, f"${low:,.0f} – ${high:,.0f}", "Likely range",
+                f"the real salary fell in this range {test['interval_coverage']:.0%} of the time")
+            kpi(r3, f"${peers['salary_mid'].median():,.0f}" if len(peers) else "—",
+                "Typical salary for similar jobs", f"{fam} · {sen} ({len(peers):,} postings)")
+            st.write("")
 
-# ── Footer ────────────────────────────────────────────────────────────────────
-st.markdown("---")
-st.markdown(
-    "<center><small>"
-    "Marc Abi Zeid Daou &nbsp;|&nbsp; Job Market Analytics Dashboard &nbsp;|&nbsp; "
-    "Python · Streamlit · Scikit-learn"
-    "</small></center>",
-    unsafe_allow_html=True
-)
+            # Where the prediction sits among similar real postings.
+            if len(peers) >= MIN_GROUP:
+                with card("Your estimate vs. similar real jobs",
+                          f"Light-blue bars: salaries of {len(peers):,} real {fam} · {sen} job postings. "
+                          "Orange line: your estimate. Shaded orange: the likely range."):
+                    fig = go.Figure(go.Histogram(
+                        x=peers["salary_mid"].clip(upper=500_000), xbins=dict(start=20_000, end=510_000, size=10_000),
+                        marker=dict(color=BLUE_LIGHT, line=dict(color=CARD, width=1)),
+                        hovertemplate="%{y:,} postings<extra></extra>"))
+                    fig.add_vrect(x0=low, x1=high, fillcolor=ORANGE, opacity=0.12, line_width=0)
+                    fig.add_vline(x=np.exp(pred_log), line_color=ORANGE, line_width=2.5)
+                    fig.add_annotation(x=np.exp(pred_log), y=1, yref="paper", yanchor="bottom", showarrow=False,
+                                       text=f"Estimate {usd(np.exp(pred_log))}", font=dict(color=INK, size=12))
+                    fig.update_layout(height=280, bargap=0.04, margin=dict(t=28),
+                                      xaxis=dict(tickformat="$~s", title="Yearly salary (USD)"),
+                                      yaxis=dict(title="Number of job postings"))
+                    show(fig)
+            # Job types that usually pay by the hour have few yearly salaries to learn from,
+            # so the estimate for them is less reliable. Say so instead of hiding it.
+            family_n = int((all_salaried["role_family"] == fam).sum())
+            if family_n < 1000:
+                st.warning(f"Only {family_n:,} {fam} postings list a yearly salary (many jobs of this type pay "
+                           "by the hour), so this estimate is less reliable than for office and tech roles.")
+            if employment in ("Part Time", "Internship", "Temporary"):
+                st.caption("Note: the estimate is a full-year salary figure, as advertised by employers.")
+            if company == "Not listed":
+                st.info("Tip: choosing a company makes the estimate more precise, because pay differs a lot "
+                        "between employers.")
+            else:
+                same = all_salaried[all_salaried["company"] == company]
+                same = same.assign(match=same["role_family"].eq(fam)).sort_values(
+                    ["match", "salary_mid"], ascending=[False, False]).head(8)
+                if len(same):
+                    st.markdown(f"**Real job postings at {company} that show a salary** (similar jobs first)")
+                    st.dataframe(same[["title", "location", "salary_min", "salary_max", "url"]],
+                                 width="stretch", hide_index=True,
+                                 column_config={"title": "Title", "location": "Location",
+                                                "salary_min": st.column_config.NumberColumn("Min", format="$%d"),
+                                                "salary_max": st.column_config.NumberColumn("Max", format="$%d"),
+                                                "url": st.column_config.LinkColumn("Posting", display_text="open")})
+
+        st.markdown("### How accurate is the model?")
+        st.caption(f"Scores come from {meta['n_test']:,} job postings the model never saw during training "
+                   "(the last tile uses a separate test where whole companies were left out). "
+                   "**R²** is the share of the salary differences between jobs that the model explains "
+                   "(1.0 = perfect, 0 = no better than guessing the average).")
+        k1, k2, k3, k4, k5 = st.columns(5)
+        kpi(k1, f"{test['r2']:.2f}", "R² (accuracy score)", f"explains {test['r2']:.0%} of salary differences")
+        kpi(k2, f"${test['mae']:,.0f}", "Average error", "average distance from the real salary")
+        kpi(k3, f"{test['median_ape']:.0%}", "Typical % error", "half of estimates are closer than this")
+        kpi(k4, f"{test['interval_coverage']:.0%}", "Range hit rate", "real salary inside the likely range")
+        kpi(k5, f"{unseen['r2']:.2f}", "R² for new companies", "companies absent from training")
+        st.write("")
+
+        left, right = st.columns(2)
+        with left:
+            comp = pd.DataFrame(meta["comparison"]).T.rename_axis("model").reset_index().sort_values("cv_r2")
+            with card("Which model predicts best?",
+                      "Four approaches were tested on the same data (higher R² = more accurate). The thin black line "
+                      "shows how much the score varied across 5 test rounds. Dark blue = the model chosen."):
+                fig = go.Figure(go.Bar(
+                    x=comp["cv_r2"], y=comp["model"], orientation="h",
+                    marker_color=[BLUE if m == meta["model"] else BLUE_LIGHT for m in comp["model"]],
+                    error_x=dict(type="data", array=comp["cv_r2_std"], color=INK_2, thickness=1.5, width=4),
+                    text=comp["cv_r2"].map(lambda v: f"R² {v:.3f}" if v > 0.1 else ""), textposition="inside",
+                    insidetextanchor="start", textfont=dict(color=INK),
+                    customdata=comp[["cv_mae", "test_r2", "test_mae"]],
+                    hovertemplate="Average error: %{customdata[0]:$,.0f}<br>"
+                                  "On unseen test jobs: R² %{customdata[1]:.3f}, error %{customdata[2]:$,.0f}"
+                                  "<extra></extra>"))
+                fig.update_layout(height=300, yaxis=dict(gridcolor="rgba(0,0,0,0)"),
+                                  xaxis=dict(title="R² (higher = more accurate)",
+                                             range=[min(0, comp["cv_r2"].min()), 1]))
+                table = comp[["model", "cv_r2", "cv_r2_std", "cv_mae", "test_r2", "test_mae", "seconds"]].iloc[::-1]
+                table.columns = ["Model", "CV R²", "CV R² SD", "CV MAE ($)", "Test R²", "Test MAE ($)", "Fit time (s)"]
+                show(fig, table)
+
+            imp = pd.Series(meta["permutation_importance"]).rename_axis("input").reset_index(name="drop")
+            imp["input"] = imp["input"].str.replace("_", " ").str.capitalize()
+            imp["after"] = test["r2"] - imp["drop"]
+            imp["_text"] = imp["drop"].map(lambda v: f"−{v:.3f}")
+            with card("What information matters most?",
+                      "How much accuracy (R²) drops when one piece of information is scrambled. "
+                      "A bigger drop means the model relies on it more."):
+                fig = ranked_bar(imp, "drop", "input",
+                                 f"Without it, R² falls from {test['r2']:.2f} to %{{customdata[1]:.2f}}", 340)
+                fig.update_layout(xaxis=dict(title="Accuracy lost (drop in R²)"))
+                show(fig, imp.drop(columns=["_text", "after"]).rename(columns={"input": "Input", "drop": "R² drop"}))
+        with right:
+            sample = pd.DataFrame(meta["test_sample"])
+            sample["error"] = sample["predicted"] / sample["actual"] - 1
+            with card("Estimated vs. real salaries",
+                      f"Each dot is one of {len(sample):,} jobs the model never saw. Dots on the diagonal line "
+                      "were estimated exactly; the closer the cloud hugs the line, the better."):
+                fig = go.Figure()
+                fig.add_scatter(x=sample["actual"], y=sample["predicted"], mode="markers",
+                                marker=dict(color=BLUE, size=7, opacity=0.35),
+                                customdata=sample[["role_family", "error"]],
+                                hovertemplate="%{customdata[0]}<br>Real %{x:$,.0f} · estimated %{y:$,.0f}<br>"
+                                              "Off by %{customdata[1]:+.0%}<extra></extra>")
+                lo, hi = 25_000, 700_000
+                fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color=INK_2, width=1.5),
+                                hoverinfo="skip")
+                ticks = [30_000, 50_000, 100_000, 200_000, 300_000, 500_000]
+                axis = dict(type="log", range=[np.log10(lo), np.log10(hi)], tickvals=ticks,
+                            ticktext=[usd(t) for t in ticks])
+                fig.update_layout(height=470, xaxis=dict(**axis, title="Real salary"),
+                                  yaxis=dict(**axis, title="Model's estimate"))
+                show(fig)
+
+            fam_acc = pd.DataFrame(meta["by_role_family"]).sort_values("mae")
+            with card("Accuracy for each type of job", "Scores on jobs the model never saw, sorted by average error"):
+                st.dataframe(fam_acc, width="stretch", hide_index=True,
+                             column_config={"role_family": "Type of job",
+                                            "n": st.column_config.NumberColumn("Jobs tested", format="%d"),
+                                            "r2": st.column_config.NumberColumn("R²", format="%.2f"),
+                                            "mae": st.column_config.NumberColumn("Average error", format="$%d"),
+                                            "median_actual": st.column_config.NumberColumn("Typical salary",
+                                                                                           format="$%d")})
+
+# ══ About the data ════════════════════════════════════════════════════════════
+with tab_about:
+    counts = summary["salary_status_counts"]
+    labels = {"usable": "Annual USD salary (used in salary charts)", "no_salary": "No salary listed",
+              "not_annual_usd": "Salary in another currency or per hour/month",
+              "implausible_amount": "Midpoint outside $20k–$1M",
+              "range_too_wide": "Range wider than 4×",
+              "invalid_range": "Invalid range (e.g. minimum above maximum)"}
+    funnel = pd.DataFrame({"Salary information": [labels.get(k, k) for k in counts],
+                           "Postings": list(counts.values())}).sort_values("Postings", ascending=False)
+    funnel["Share"] = (funnel["Postings"] / funnel["Postings"].sum()).map(lambda v: f"{v:.1%}")
+    funnel["Postings"] = funnel["Postings"].map(lambda v: f"{v:,}")
+
+    left, right = st.columns([1, 1], gap="large")
+    with left:
+        st.markdown(f"""
+### Source
+**{summary['source']}**: {summary['raw_postings']:,} job postings collected from public company career
+pages (Greenhouse, Lever, Ashby, SmartRecruiters, Workable) across {summary['countries']} countries.
+
+### How the data was prepared
+* Every posting counts toward posting volumes, role mix and skill demand.
+* Salary charts use postings that advertise pay **per year in USD**, so all figures are directly
+  comparable without currency or hours-per-year conversions.
+* Each salary is the **midpoint** of the advertised range. Midpoints outside \\$20k–\\$1M and ranges
+  wider than 4× are set aside as outliers.
+* **Role family** and **seniority** are derived from title keywords with transparent rules
+  (`pipeline/features.py`).
+
+### How the model works
+* Predicts the log of the salary midpoint from title words, company, industry, department, city,
+  country, employment type, remote flag, skills, and title-derived seniority and role family.
+* Postings repeated across many cities with an identical range are collapsed
+  ({meta['n_usable_salaries']:,} → {meta['n_deduplicated']:,}) so the test set only contains new jobs.
+* Candidate models are compared by 5-fold cross-validation on 80% of the data; the winner is scored once on
+  the remaining 20%, and again on companies it has never seen.
+
+### Scope
+* Salaries are the ranges employers advertise in their postings.
+* Most salaried postings are from the US, where pay-transparency laws require ranges.
+* The data is a snapshot of roles open in {pd.Timestamp(summary['posted_max']):%B %Y}.
+* Skill–salary relationships show association, not cause and effect.
+""" if meta else "Model metadata missing.")
+    with right:
+        st.markdown("### Salary information in postings")
+        st.dataframe(funnel, width="stretch", hide_index=True)
+        st.markdown("### Browse the data")
+        st.caption("Postings matching the sidebar filters (first 2,000 rows).")
+        st.dataframe(df[["title", "company", "location", "role_family", "seniority", "salary_mid", "posted", "url"]]
+                     .head(2000),
+                     width="stretch", hide_index=True, height=420,
+                     column_config={"title": st.column_config.TextColumn("Title", width="medium"),
+                                    "company": "Company", "location": "Location",
+                                    "role_family": "Role family", "seniority": "Seniority",
+                                    "salary_mid": st.column_config.NumberColumn("Salary (mid)", format="$%d"),
+                                    "posted": st.column_config.DateColumn("Posted"),
+                                    "url": st.column_config.LinkColumn("Posting", display_text="open")})
+
+# ══ Footer ════════════════════════════════════════════════════════════════════
+st.markdown(f'<div class="footer">Built by <b>{AUTHOR}</b> · Python · pandas · scikit-learn · Plotly · '
+            f'Streamlit · <a href="{LINKS["GitHub"]}" target="_blank">Source code</a></div>',
+            unsafe_allow_html=True)

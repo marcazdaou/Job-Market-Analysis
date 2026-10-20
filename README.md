@@ -1,144 +1,165 @@
-# Job Market Analytics Dashboard
+# Job Market Analytics
 
-An end-to-end Python data analytics and machine learning project for exploring a **demonstration dataset** of data engineering and analytics roles. The project builds a SQLite database, compares salary-prediction models, and presents interactive visualizations and a salary estimator in Streamlit.
+An end-to-end analysis of **394,300 real job postings** from 6,295 companies in 65 countries, with a
+machine-learning salary model that explains **77% of the variance in advertised salaries** on held-out data.
 
-> **Data transparency:** This is a portfolio and learning project, **not a live job board or a source of current hiring statistics**. The pipeline can use historical salary records from Kaggle supplemented with synthetic records, or generate a fully synthetic dataset when the Kaggle file is absent. Company names, skill requirements, and posting dates are generated for demonstration; they do not represent verified vacancies at the named companies.
+**[Open the live dashboard →](https://job-market-analysis-ndmqelnezlfa64hyyhhwkv.streamlit.app)**
+Everything is precomputed and committed, so the dashboard opens with no setup.
 
-## Overview
+![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
+![Streamlit](https://img.shields.io/badge/Streamlit-1.58-red?logo=streamlit)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-1.8-orange?logo=scikit-learn)
+![Plotly](https://img.shields.io/badge/Plotly-6.7-purple?logo=plotly)
 
-The workflow has four stages:
+---
 
-1. **Data preparation:** Load eligible U.S. salary records from an optional Kaggle CSV, or generate synthetic fallback records; create additional synthetic records when the CSV is present.
-2. **Storage:** Rebuild and populate a local SQLite `jobs` table with source labels distinguishing Kaggle-derived and synthetic records.
-3. **Machine learning:** Engineer numerical features, evaluate three regression algorithms, and save the selected model and its evaluation metadata.
-4. **Visualization:** Run a Streamlit dashboard with interactive charts, filters, model comparisons, and a salary estimator.
+## The questions, and what the data says
 
-## Features
+| # | Question | Answer |
+|---|---|---|
+| 1 | How much do these jobs pay? | Typical (median) advertised salary is **$160k**; half fall between $113k and $206k (64,574 postings with a yearly USD salary). |
+| 2 | Which jobs pay the most? | **Software Engineering ($195k), Data & AI ($191k), Product & Design ($190k)**, then Security ($188k). |
+| 3 | How much does seniority matter? | **2.7×** from entry level ($83k) to principal/staff ($223k); Senior/Lead $170k, Director/Executive $204k. |
+| 4 | Do skills raise pay? | Jobs asking for PyTorch pay $220k typically, but once title, company and city are accounted for, **a single skill shifts pay by at most 4%**. The job and the employer matter far more. |
+| 5 | Are employers open about pay? | **27%** of postings show a salary, driven by law: 56% in the US and 27% in the UK, but 3% in Germany and 1% in France. |
+| 6 | Can machine learning predict a salary? | **Yes:** on 10,972 unseen jobs the model explains 77% of pay differences (R² 0.77), with a typical error of 11%. |
 
-### Market-analysis dashboard
+The dashboard opens with these six answers and lets you explore each one interactively.
 
-- Summary cards for dataset record count, average salary, remote share, and distinct company labels.
-- Salary by job title, skill frequency and salary associations, location comparisons, salary distribution, posting-date distribution, and experience-based visualizations.
-- Filters for job title, location, remote/on-site status, salary range, and date range.
+---
 
-**Interpretation:** The cards and charts describe the records currently loaded into SQLite. In synthetic-only mode, all values are simulated. In mixed mode, only the source salary values and other fields carried over from Kaggle are historical source data; generated companies, skills, dates, and estimated salary ranges are not independently observed job postings. The “companies” metric counts assigned company labels, not confirmed employers hiring.
+## Dashboard
 
-### Salary estimator
+| Tab | What it shows |
+|---|---|
+| **Overview** | The six key findings, headline numbers, an interactive world map of postings and pay, in-demand job types, and a "who hires vs. who pays" company chart |
+| **Salaries** | Salary distribution with a "compare your salary" marker; typical pay and spread by job type, seniority, city and industry; remote vs. on-site pay gap |
+| **Skills** | Skill explorer (pick a skill → demand, pay, paired skills, roles); most requested skills; best-paid skills; ML estimate of each skill's own effect on pay |
+| **Explore a role** | Search any job title, or compare two side by side: pay distribution, skills, best-paying companies, and the latest postings with links |
+| **Salary predictor (ML)** | Describe a job → estimated salary, likely range, and where it sits among similar real jobs; full model evaluation |
+| **About the data** | Source, preparation steps, model method, and a searchable table of postings |
 
-- Accepts job title, location, experience, and skill inputs.
-- Uses the saved model to produce a salary estimate and illustrative range.
-- Highlights additional skills using the project's dataset-driven logic.
+Sidebar filters (role family, seniority, country, remote/on-site, employment type) apply to every tab
+except the predictor. Tooltips add context (pay, remote share, top skill) rather than repeating labels,
+and every chart has a "View data table" option.
 
-Estimates are demonstrations of the trained model, **not compensation advice or verified market quotes**.
+---
 
-### Model comparison
+## Data
 
-- Compares **Linear Regression**, **Random Forest**, and **Gradient Boosting**.
-- Uses an **80/20 train/test split** and **5-fold cross-validation**.
-- Displays test mean absolute error (MAE), test R², and mean cross-validation R².
-- Saves the model selected by the highest mean cross-validation R², along with its feature-column order and evaluation metadata.
+**Source:** `zalizedata/tech-job-postings-salary-dataset` (CC BY-NC 4.0): job postings collected from
+public company career pages (SmartRecruiters, Greenhouse, Ashby, Lever, Workable), covering roles open
+in August 2026.
 
-## Technology
+**Cleaning** (`pipeline/collector.py`, rules in `pipeline/features.py`):
 
-| Area | Tools |
-| --- | --- |
-| Language | Python 3.11+ |
-| Data preparation | Pandas, NumPy |
-| Database | SQLite |
-| Machine learning | scikit-learn |
-| Dashboard and charts | Streamlit, Plotly |
-| Model artifacts | Pickle, JSON |
+| Salary status | Postings |
+|---|---:|
+| No salary listed | 287,149 |
+| **Usable annual USD salary** | **64,574** |
+| Another currency, or hourly/monthly pay | 42,029 |
+| Range wider than 4× (uninformative) | 303 |
+| Midpoint outside $20k–$1M (hourly rate mislabeled as annual, or typo) | 200 |
+| Invalid range (min ≤ 0 or max < min) | 45 |
 
-## Data sources and limitations
+- All postings count toward volumes, role mix and skill demand. Salary statistics use only the 64,574
+  usable annual USD ranges; other currencies and pay periods are **excluded, not converted**, so no
+  exchange-rate or hours-per-year assumption is introduced.
+- Salary = midpoint of the advertised range. Medians are reported because pay is right-skewed.
+- **Role family** (19 job types) and **seniority** (5 levels) are inferred from job-title keywords using
+  transparent, ordered regex rules, with French, German, Spanish and Dutch keywords for non-English
+  titles. 86% of postings (96% of those with a salary) match a job type; the rest have very generic or
+  less common-language titles and are left out of job-type charts only.
 
-The data collector (`pipeline/collector.py`) supports two modes:
+---
 
-| Mode | Records loaded | What the records represent |
-| --- | --- | --- |
-| Kaggle CSV available | Eligible U.S. Kaggle salary records **plus 1,200 synthetic records** | Historical salary records supplemented by simulated job records. The number of eligible Kaggle rows depends on the CSV and filtering. |
-| Kaggle CSV unavailable | **2,000 synthetic records** | A fully simulated dataset for running the complete project without the optional CSV. |
+## Machine learning
 
-The collector filters Kaggle records to `company_location == "US"` and `salary_in_usd >= 50000`. The previously documented **344 Kaggle records** is an example from one dataset version and run, not a guaranteed count. With 344 eligible Kaggle rows, mixed mode would contain **1,544 total records**.
+**Task:** predict the advertised annual salary of a posting.
+**Target:** `log(salary midpoint)`, so errors are proportional (a $20k miss matters more at $60k than at $400k).
 
-The Kaggle file contains salary data, **not verified current job advertisements**. The pipeline assigns company names and skills, generates posting dates within the preceding 60 days, estimates salary bounds around Kaggle salary values, and generates experience-year values from experience bands. In synthetic-only mode, salaries and the other job fields are simulated. Accordingly, charts titled “postings,” “companies hiring,” or “in-demand skills” should be understood as descriptions of the demonstration dataset rather than measured hiring-market activity.
+**Features:** title text (TF-IDF unigrams + bigrams), company, industry, department, city, country,
+employment type, remote flag, skills (binary flags), and title-derived seniority / role family.
 
-Kaggle dataset: [Data Science Job Salaries](https://www.kaggle.com/datasets/ruchi798/data-science-job-salaries). Download the dataset yourself if you want to use the optional CSV.
+**Evaluation protocol (designed to avoid leakage):**
+1. The same job is often posted in many cities with an identical salary range. These copies are collapsed
+   (64,574 → 54,859) so a test row can never be a duplicate of a training row.
+2. 20% is held out as a test set and not touched until the end.
+3. Candidates are compared with 5-fold cross-validation on the remaining 80%; the lowest CV error wins.
+4. The winner is scored once on the test set, and again on a split where **entire companies** are held out.
+5. An 80% prediction interval is built from out-of-fold residuals (split-conformal style) and its
+   coverage is checked on the test set.
+
+**Results** (dollar scale):
+
+| Model | CV R² | Test R² | Test MAE |
+|---|---:|---:|---:|
+| Median baseline | −0.004 | −0.003 | $55,869 |
+| Ridge: title + location only (previous version of this project) | 0.586 | 0.611 | $31,437 |
+| Gradient boosting (target-encoded categoricals) | 0.645 | 0.676 | $28,663 |
+| **Ridge: full feature set (selected)** | **0.737** | **0.771** | **$24,050** |
+
+| Metric | Value |
+|---|---:|
+| Test R² (log scale) | 0.806 |
+| Median absolute % error | 11.1% |
+| 80% interval coverage on test set | 80.9% |
+| R² on companies never seen in training | 0.496 |
+
+The linear model beats gradient boosting here because most of the signal sits in thousands of sparse
+title words and company identities, which a regularized linear model handles directly. Stacking both
+models was tested and added only +0.006 R², so the simpler, interpretable model was kept.
+
+**Permutation importance** (drop in test R² when one input is shuffled): title 0.58, company 0.40,
+department 0.06, industry 0.05, city 0.03, skills 0.01.
+
+**Scope:** salaries are the ranges employers advertise; most salaried postings are from the US, where
+pay-transparency laws require ranges; role family and seniority come from title keywords; skill–pay
+relationships are associations rather than cause and effect; for employers outside the training data the
+model scores R² 0.50; jobs that usually pay by the hour (retail, hospitality, trades) have few yearly
+salaries, so the predictor flags its estimates for them as less reliable; pay gaps between groups (e.g.
+remote vs. on-site) can partly reflect a different mix of jobs in each group.
+
+---
 
 ## Project structure
 
-```text
-Job-Market-Analysis/
+```
 ├── pipeline/
-│   └── collector.py       # Load or generate records and populate SQLite
+│   ├── features.py        # Shared rules: salary cleaning, role family, seniority, model inputs
+│   └── collector.py       # Step 1: raw parquet -> data/jobs_clean.parquet + data_summary.json
 ├── models/
-│   ├── train.py           # Feature engineering, evaluation, model selection
-│   ├── salary_model.pkl   # Generated trained model
-│   └── model_meta.json    # Generated evaluation metadata
+│   ├── train.py           # Step 2: compare models, evaluate, save the winner
+│   ├── salary_model.pkl   # Trained model (committed)
+│   └── model_meta.json    # Metrics, comparison, chart data (committed)
 ├── dashboard/
-│   └── app.py             # Streamlit dashboard
+│   └── app.py             # Step 3: Streamlit dashboard (reads committed artifacts only)
 ├── data/
-│   ├── ds_salaries.csv    # Optional Kaggle CSV supplied by the user
-│   └── jobs.db            # Generated SQLite database
-├── setup.py               # Install, prepare data, train, launch dashboard
-├── requirements.txt
-└── README.md
+│   ├── jobs_clean.parquet # Cleaned postings, 11 MB (committed)
+│   └── data_summary.json  # Cleaning funnel (committed)
+├── .streamlit/config.toml # Dashboard theme
+├── check_data.py          # Quick profile of the raw file
+├── setup.py               # Rebuild everything from raw data and launch
+└── requirements.txt       # Pinned versions (the model pickle is version-specific)
 ```
 
-Generated files may not exist until you run the pipeline.
+---
 
 ## Run locally
-
-**Requirements:** Python 3.11 or newer and pip.
-
-### 1. Clone the repository
 
 ```bash
 git clone https://github.com/marcazdaou/Job-Market-Analysis.git
 cd Job-Market-Analysis
+pip install -r requirements.txt
+streamlit run dashboard/app.py
 ```
 
-### 2. Optionally add the Kaggle dataset
+**To rebuild from raw data:** place the source file at `data/tech_jobs_2026/jobs_large.parquet`, then run
+`python setup.py` (or `python pipeline/collector.py` followed by `python models/train.py`). Training takes about 2 minutes on a laptop.
 
-Download `ds_salaries.csv` from the [Kaggle dataset page](https://www.kaggle.com/datasets/ruchi798/data-science-job-salaries) and place it at `data/ds_salaries.csv`.
-
-If you skip this step, the collector generates 2,000 synthetic records. The dataset mode is determined when the collector runs; adding the CSV later requires rerunning the collector and retraining the model.
-
-### 3. Run the setup script
-
-```bash
-python setup.py
-```
-
-The script installs its Python dependencies, rebuilds the SQLite database, trains the models, and starts Streamlit. Open **http://localhost:8501** if your browser does not open automatically.
-
-**Alternative: run each stage manually**
-
-```bash
-python -m pip install -r requirements.txt
-python pipeline/collector.py
-python models/train.py
-python -m streamlit run dashboard/app.py
-```
-
-**Note:** Running the collector drops and recreates the `jobs` table. Do not store records you need to preserve in the generated database without backing them up first.
-
-## Model training and evaluation
-
-`models/train.py` engineers features from experience, remote status, job-title seniority, skill count, **27 individual skill indicators**, one-hot-encoded locations, and employment types. It trains the three candidate regressors and records test MAE, test R², and mean and standard deviation of 5-fold cross-validation R².
-
-The selected model is saved to `models/salary_model.pkl`; the comparison results, feature count, and selected-model metrics are saved to `models/model_meta.json`.
-
-**For exact performance numbers, use the output of your own run or the generated `model_meta.json`.** Scores vary with the input CSV, randomly generated records, and the available features. Do not treat a score obtained on fully synthetic records as evidence of accuracy on real-world salaries. The current training script computes cross-validation on the full feature matrix, including the held-out test portion; consequently, its cross-validation score is useful for this project’s comparison but should not be presented as a fully independent validation result.
-
-## Known limitations
-
-- The project does not scrape or continuously refresh real job advertisements.
-- Company names and posting dates are assigned, not verified; the date filter does not establish current market trends.
-- Skill frequencies and skill-related salary comparisons reflect generated skill assignments.
-- Synthetic data can make model performance look different from performance on real job-market data.
-- The model and dashboard are educational demonstrations, not tools for hiring decisions or salary negotiation.
+---
 
 ## Author
 
-**Marc Abi Zeid Daou**  
-[GitHub](https://github.com/marcazdaou)
+**Marc Abi Zeid Daou**, BS Computer Science, UMass Boston
+[LinkedIn](https://www.linkedin.com/in/marc-abi-zeid-daou/) · [GitHub](https://github.com/marcazdaou) · [Portfolio](https://marcazdaou.github.io/my-portfolio/)

@@ -1,0 +1,26 @@
+{
+  "source": "zalizedata/tech-job-postings-salary-dataset (CC BY-NC 4.0)",
+  "raw_postings": 394300,
+  "postings": 394300,
+  "companies": 6295,
+  "countries": 65,
+  "posted_min": "2020-01-01",
+  "posted_max": "2026-08-01",
+  "salary_status_counts": {
+    "no_salary": 287149,
+    "usable": 64574,
+    "not_annual_usd": 42029,
+    "range_too_wide": 303,
+    "implausible_amount": 200,
+    "invalid_range": 45
+  },
+  "usable_salaries": 64574,
+  "rules": {
+    "currency_period": "USD per year only",
+    "plausible_midpoint_usd": [
+      20000,
+      1000000
+    ],
+    "max_range_ratio": 4.0
+  }
+}
