@@ -222,5 +222,5 @@ pytest                                # run all tests
 
 ## Author
 
-**Marc Abi Zeid Daou**, BS Computer Science, UMass Boston
+**Marc Abi Zeid Daou**, Data Analytics Engineering, Northeastern University
 [LinkedIn](https://www.linkedin.com/in/marc-abi-zeid-daou/) · [GitHub](https://github.com/marcazdaou) · [Portfolio](https://marcazdaou.github.io/my-portfolio/)
