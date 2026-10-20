@@ -103,6 +103,14 @@ st.markdown(f"""
     .masthead .stats {{ gap: 6px 22px; }}
   }}
 
+  /* "What's in this data" boxes: light blue panel with a blue left edge */
+  .scope {{ background: #eef4fb; border-left: 4px solid {BLUE}; border-radius: 8px; padding: 14px 16px;
+            height: 100%; }}
+  .scope .q {{ font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.08em; color: {NAVY};
+               font-weight: 700; }}
+  .scope .a {{ font-size: 1.02rem; font-weight: 700; color: {INK}; margin: 4px 0 4px; }}
+  .scope .d {{ font-size: 0.85rem; color: {INK_2}; line-height: 1.45; }}
+
   /* Key findings ("the story") */
   .finding {{ background: {CARD}; border: 1px solid rgba(11,11,11,0.07); border-radius: 14px;
               padding: 16px 18px; height: 100%; box-shadow: 0 1px 3px rgba(16,24,40,0.05); }}
@@ -291,9 +299,9 @@ def key_findings():
     best_skill, best_pay = skill_pay["median"].idxmax(), skill_pay["median"].max()
 
     row1 = st.columns(3)
-    finding(row1[0], "1 · How much do these jobs pay?", f"{usd(sal.median())} typical salary",
+    finding(row1[0], "1 · How much do these jobs pay?", f"{usd(sal.median())} typical advertised salary",
             f"Half of advertised salaries fall between {usd(sal.quantile(.25))} and {usd(sal.quantile(.75))} "
-            f"per year ({len(sal):,} postings with a yearly USD salary).", "Salaries tab")
+            f"per year ({len(sal):,} postings with a yearly USD salary, mostly US jobs).", "Salaries tab")
     finding(row1[1], "2 · Which jobs pay the most?", ", ".join(top3["role_family"]),
             "Typical salaries of " + ", ".join(usd(v) for v in top3["median"]) +
             f", against {usd(sal.median())} across all jobs.", "Salaries tab")
@@ -317,6 +325,42 @@ def key_findings():
                 f"On {meta['n_test']:,} jobs it never saw, the model explains {meta['test']['r2']:.0%} of the "
                 f"differences in pay (R² {meta['test']['r2']:.2f}). Job title and company matter most.",
                 "Salary predictor tab")
+
+
+TECH_FAMILIES = ["Software Engineering", "Data & AI", "Product & Design", "Security"]
+
+
+def data_scope():
+    """'What's in this data' box: which jobs are included and where the salary numbers come from.
+
+    Answers the first question a reader has ("is this only tech jobs?") before any chart.
+    All numbers are computed from the data.
+    """
+    known = jobs[jobs["role_family"] != OTHER_FAMILY]
+    tech_share = known["role_family"].isin(TECH_FAMILIES).mean()
+    biggest = [f for f in known["role_family"].value_counts().index if f not in TECH_FAMILIES][:5]
+    sal_known = all_salaried[all_salaried["role_family"] != OTHER_FAMILY]
+    us_share = (all_salaried["country"] == "United States").mean()
+    senior_share = all_salaried["seniority"].isin(["Senior / Lead", "Principal / Staff",
+                                                   "Director / Executive"]).mean()
+    sal_tech = sal_known["role_family"].isin(TECH_FAMILIES).mean()
+
+    cols = st.columns(3)
+    boxes = [
+        ("Which jobs?", "Every type of role, not only tech",
+         f"Tech jobs (software, data, product, security) are {tech_share:.0%} of postings. The rest include "
+         f"{', '.join(b.lower() for b in biggest[:-1])} and {biggest[-1].lower()}, plus healthcare, education and more."),
+        ("Which salaries?", f"{len(all_salaried):,} postings with a yearly USD salary",
+         f"{us_share:.0%} of them are US jobs, where pay-transparency laws require employers to post a range. "
+         "Postings in other currencies or with hourly pay are counted as postings but not in salary charts."),
+        ("Why do salaries look high?", "They describe these postings, not all workers",
+         "Most are US jobs, where pay is higher than in most countries. Also, "
+         f"{sal_tech:.0%} of salaried postings are tech jobs and {senior_share:.0%} are senior level or above. "
+         "Use the figures to compare jobs with each other, not with national averages."),
+    ]
+    for col, (q, a, d) in zip(cols, boxes):
+        col.markdown(f'<div class="scope"><div class="q">{q}</div><div class="a">{a}</div>'
+                     f'<div class="d">{d}</div></div>', unsafe_allow_html=True)
 
 
 def top_skill_by(df_rows: pd.Index, by: str) -> pd.Series:
@@ -365,7 +409,7 @@ salaried = df.dropna(subset=["salary_mid"])
 links_html = "".join(f'<a href="{url}" target="_blank">{name}</a>' for name, url in LINKS.items())
 # Key stats under the subtitle (all numbers come from the data files).
 stats = [(f"{summary['postings']:,}", "Job postings"), (f"{summary['companies']:,}", "Companies"),
-         (str(summary["countries"]), "Countries"), (f"{summary['usable_salaries']:,}", "Salaries analyzed")]
+         (str(summary["countries"]), "Countries"), (f"{summary['usable_salaries']:,}", "Postings with a salary")]
 if meta:
     stats.append((f"{meta['test']['r2']:.2f}", "Model R²"))
 stats_html = "".join(f'<div class="stat"><div class="v">{v}</div><div class="l">{label}</div></div>'
@@ -373,7 +417,8 @@ stats_html = "".join(f'<div class="stat"><div class="v">{v}</div><div class="l">
 st.markdown(f"""
 <div class="masthead">
   <div class="eyebrow">Job Market Analytics</div>
-  <h1>What <span class="num">{summary['postings']:,}</span> job postings reveal about pay, skills and hiring</h1>
+  <h1>What <span class="num">{summary['postings']:,}</span> job postings, across every type of role,
+      reveal about pay, skills and hiring</h1>
   <div class="sub">An analysis of open roles at {summary['companies']:,} companies in {summary['countries']} countries
        ({pd.Timestamp(summary['posted_max']):%B %Y}), with a machine-learning model that estimates salaries.</div>
   <div class="stats">{stats_html}</div>
@@ -386,6 +431,9 @@ tab_overview, tab_salary, tab_skills, tab_explore, tab_model, tab_about = st.tab
 
 # ══ Overview ══════════════════════════════════════════════════════════════════
 with tab_overview:
+    st.markdown("### What's in this data")
+    data_scope()
+    st.write("")
     st.markdown("### Key findings")
     st.caption("Six questions this project set out to answer, using all postings (the sidebar filters "
                "don't change these). The tabs explore each one in detail.")
@@ -415,12 +463,19 @@ with tab_overview:
                .reset_index())
         geo = geo[geo["postings"] > 0]
         geo["iso3"] = geo["country"].map(iso3_lookup())
-        country_pay = salary_stats(salaried, "country").set_index("country")["median"]
-        geo["median"] = geo["country"].map(country_pay)
-        geo["median_txt"] = geo["median"].map(lambda v: f"${v:,.0f}" if pd.notna(v) else "not enough USD data")
+        # Median advertised salary per country, with the number of postings it is based on,
+        # so the tooltip says exactly what the figure is (and isn't).
+        country_pay = salary_stats(salaried, "country").set_index("country")
+        geo["median"] = geo["country"].map(country_pay["median"])
+        geo["median_txt"] = [
+            f"${m:,.0f} (median of {int(n):,} postings with a yearly USD salary)" if pd.notna(m)
+            else "too few postings with a yearly USD salary"
+            for m, n in zip(geo["median"], geo["country"].map(country_pay["n"]))]
         with card("Where are the jobs?",
                   "Darker countries have more job postings. Hover over a country to see its number of postings, "
-                  "how many show a salary, how many are remote, and the typical salary."):
+                  "how many show a salary, how many are remote, and the typical advertised salary. Salaries "
+                  "describe the jobs in this dataset (mostly tech and professional roles), not all workers "
+                  "in a country."):
             ticks = [10, 100, 1_000, 10_000, 100_000]
             fig = go.Figure(go.Choropleth(
                 locations=geo["iso3"], locationmode="ISO-3", z=np.log10(geo["postings"]),
@@ -433,7 +488,7 @@ with tab_overview:
                 customdata=geo[["postings", "listed", "remote", "median_txt"]],
                 hovertemplate="<b>%{text}</b><br>%{customdata[0]:,} postings<br>"
                               "%{customdata[1]:.0%} show a salary · %{customdata[2]:.0%} remote<br>"
-                              "Typical salary: %{customdata[3]}<extra></extra>"))
+                              "Typical advertised salary: %{customdata[3]}<extra></extra>"))
             fig.update_geos(showframe=False, showcoastlines=False, projection_type="natural earth",
                             landcolor="#f1f2f4", showland=True, showcountries=True, countrycolor="white",
                             bgcolor=CARD, lataxis_range=[-58, 85])

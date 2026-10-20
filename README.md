@@ -1,7 +1,13 @@
 # Job Market Analytics
 
-An end-to-end analysis of **394,300 real job postings** from 6,295 companies in 65 countries, with a
+An end-to-end analysis of **394,300 job postings across every type of role** (software, data, sales,
+engineering, operations, healthcare, retail and more) from 6,295 companies in 65 countries, with a
 machine-learning salary model that explains **77% of the variance in advertised salaries** on held-out data.
+
+**Which jobs and which salaries?** Tech roles (software, data, product, security) are 21% of postings; the
+other 79% span every other field. Salary figures use the 64,574 postings that list a yearly USD salary;
+82% of those are US jobs, 31% are tech jobs and 45% are senior level or above, so they describe these
+postings rather than national averages.
 
 **[Open the live dashboard →](https://job-market-analysis-ndmqelnezlfa64hyyhhwkv.streamlit.app)**
 Everything is precomputed and committed, so the dashboard opens with no setup.
