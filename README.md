@@ -6,16 +6,20 @@ machine-learning salary model that explains **77% of the variance in advertised 
 
 **Which jobs and which salaries?** Tech roles (software, data, product, security) are 21% of postings; the
 other 79% span every other field. Salary figures use the 64,574 postings that list a yearly USD salary;
-82% of those are US jobs, 31% are tech jobs and 45% are senior level or above, so they describe these
+82% of those are US jobs, 32% are tech jobs and 45% are senior level or above, so they describe these
 postings rather than national averages.
 
-**[Open the live dashboard →](https://job-market-analysis-ndmqelnezlfa64hyyhhwkv.streamlit.app)**
+**[Open the live dashboard →](https://job-market-analysis-ndmqelnezlfa64hyyhhwkv.streamlit.app)** ·
+**[Read the report (PDF) →](report/report.pdf)**
 Everything is precomputed and committed, so the dashboard opens with no setup.
 
+[![tests](https://github.com/marcazdaou/Job-Market-Analysis/actions/workflows/tests.yml/badge.svg)](https://github.com/marcazdaou/Job-Market-Analysis/actions/workflows/tests.yml)
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.58-red?logo=streamlit)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-1.8-orange?logo=scikit-learn)
 ![Plotly](https://img.shields.io/badge/Plotly-6.7-purple?logo=plotly)
+
+[![Dashboard overview](docs/dashboard.png)](https://job-market-analysis-ndmqelnezlfa64hyyhhwkv.streamlit.app)
 
 ---
 
@@ -23,14 +27,16 @@ Everything is precomputed and committed, so the dashboard opens with no setup.
 
 | # | Question | Answer |
 |---|---|---|
-| 1 | How much do these jobs pay? | Typical (median) advertised salary is **$160k**; half fall between $113k and $206k (64,574 postings with a yearly USD salary). |
-| 2 | Which jobs pay the most? | **Software Engineering ($195k), Data & AI ($191k), Product & Design ($190k)**, then Security ($188k). |
-| 3 | How much does seniority matter? | **2.7×** from entry level ($83k) to principal/staff ($223k); Senior/Lead $170k, Director/Executive $204k. |
+| 1 | How much do these jobs pay? | Typical (median) advertised salary is **$160k** (95% CI $155k–$165k); half fall between $113k and $206k. |
+| 2 | Which jobs pay the most? | **Software Engineering ($195k), Data & AI ($191k), Product & Design ($190k)**, then Security ($188k). Their confidence intervals overlap, so the top four are statistically tied. |
+| 3 | How much does seniority matter? | **2.7×** (95% CI 2.3×–3.3×) from entry level ($83k) to principal/staff ($223k); Senior/Lead $170k, Director/Executive $204k. |
 | 4 | Do skills raise pay? | Jobs asking for PyTorch pay $220k typically, but once title, company and city are accounted for, **a single skill shifts pay by at most 4%**. The job and the employer matter far more. |
-| 5 | Are employers open about pay? | **27%** of postings show a salary, driven by law: 56% in the US and 27% in the UK, but 3% in Germany and 1% in France. |
+| 5 | Do remote jobs pay more? | Remote postings advertise **+9.8%** more, but about half of that is job mix: comparing similar jobs **within the same company**, the premium is **+4.7%** (95% CI +2.5% to +6.9%). |
 | 6 | Can machine learning predict a salary? | **Yes:** on 10,972 unseen jobs the model explains 77% of pay differences (R² 0.77), with a typical error of 11%. |
 
-The dashboard opens with these six answers and lets you explore each one interactively.
+Pay transparency shapes the data: 27% of postings show a salary, 56% in the US versus 3% in Germany and
+1% in France. The dashboard opens with these six answers and lets you explore each one interactively; the
+**[report](report/report.pdf)** gives the full methods and results.
 
 ---
 
@@ -102,8 +108,8 @@ employment type, remote flag, skills (binary flags), and title-derived seniority
 |---|---:|---:|---:|
 | Median baseline | −0.004 | −0.003 | $55,869 |
 | Ridge: title + location only (previous version of this project) | 0.586 | 0.611 | $31,437 |
-| Gradient boosting (target-encoded categoricals) | 0.645 | 0.676 | $28,663 |
-| **Ridge: full feature set (selected)** | **0.737** | **0.771** | **$24,050** |
+| Gradient boosting (target-encoded categoricals) | 0.645 | 0.673 | $28,767 |
+| **Ridge: full feature set (selected)** | **0.737** | **0.771** | **$24,047** |
 
 | Metric | Value |
 |---|---:|
@@ -112,12 +118,40 @@ employment type, remote flag, skills (binary flags), and title-derived seniority
 | 80% interval coverage on test set | 80.9% |
 | R² on companies never seen in training | 0.496 |
 
-The linear model beats gradient boosting here because most of the signal sits in thousands of sparse
-title words and company identities, which a regularized linear model handles directly. Stacking both
-models was tested and added only +0.006 R², so the simpler, interpretable model was kept.
+The linear model beats gradient boosting here, plausibly because most of the signal sits in thousands of
+sparse title words and company identities, which a regularized linear model handles directly.
 
 **Permutation importance** (drop in test R² when one input is shuffled): title 0.58, company 0.40,
 department 0.06, industry 0.05, city 0.03, skills 0.01.
+
+---
+
+## Statistical inference
+
+`analysis/salary_statistics.py` attaches uncertainty to the headline findings.
+
+**Confidence intervals.** Postings from one company share pay bands and are often copied across cities,
+so they are not independent. Intervals for medians therefore use a **company cluster bootstrap**
+(1,000 replicates, each resampling whole companies). Example: overall median $160k (95% CI $155k–$165k);
+Healthcare $140k (95% CI $103k–$195k), wide because just five companies post 34% of its salaried jobs.
+
+**Remote vs. on-site: a fair comparison.** OLS regressions of log salary on a remote indicator, adding
+controls step by step, with company-clustered standard errors (de-duplicated postings, n = 52,749):
+
+| Comparison | Remote pay difference | 95% CI | p-value |
+|---|---:|---:|---:|
+| Raw difference | +9.8% | +3.5% to +16.4% | 0.002 |
+| + job type & seniority | +5.3% | +0.5% to +10.2% | 0.029 |
+| + country & employment type | +6.2% | +1.3% to +11.4% | 0.013 |
+| **+ same company (fixed effects)** | **+4.7%** | **+2.5% to +6.9%** | **<0.001** |
+
+**Are the job types right?** (`analysis/label_validation.py`) Most postings also carry a department chosen
+by the employer ("Engineering", "Sales", "People"…), which is independent of the title rules. On 117,772
+postings from 4,706 companies, the title-based job type matches the employer's department **85% of the time**
+(95% CI 85.0%–85.4%); about 90% or more for Software, Data & AI, Product & Design, Sales, Marketing and
+Research. The check also caught a real error: titles like "Sales Engineer" and "Technical Support Engineer"
+had been labeled engineering jobs because of the word "engineer"; they are now sales and support jobs.
+Cross-functional types (operations, consulting, management) sit in every department, so they are not scored.
 
 **Scope:** salaries are the ranges employers advertise; most salaried postings are from the US, where
 pay-transparency laws require ranges; role family and seniority come from title keywords; skill–pay
@@ -138,15 +172,26 @@ remote vs. on-site) can partly reflect a different mix of jobs in each group.
 │   ├── train.py           # Step 2: compare models, evaluate, save the winner
 │   ├── salary_model.pkl   # Trained model (committed)
 │   └── model_meta.json    # Metrics, comparison, chart data (committed)
+├── analysis/
+│   ├── salary_statistics.py # Step 3: bootstrap confidence intervals + remote-pay regressions
+│   ├── label_validation.py  # Checks job types against employers' own departments
+│   └── results/             # statistics.json, label_validation.json (committed)
+├── report/
+│   ├── build_report.py      # Step 4: builds the PDF report from the result files
+│   └── report.pdf           # The written report
 ├── dashboard/
-│   └── app.py             # Step 3: Streamlit dashboard (reads committed artifacts only)
+│   └── app.py               # Streamlit dashboard (reads committed artifacts only)
 ├── data/
-│   ├── jobs_clean.parquet # Cleaned postings, 11 MB (committed)
-│   └── data_summary.json  # Cleaning funnel (committed)
-├── .streamlit/config.toml # Dashboard theme
-├── check_data.py          # Quick profile of the raw file
-├── setup.py               # Rebuild everything from raw data and launch
-└── requirements.txt       # Pinned versions (the model pickle is version-specific)
+│   ├── jobs_clean.parquet   # Cleaned postings, 11 MB (committed)
+│   └── data_summary.json    # Cleaning funnel (committed)
+├── tests/                   # pytest: rules, data integrity, model calibration, dashboard smoke test
+├── .github/workflows/       # Runs the tests on every push
+├── docs/dashboard.png       # README screenshot
+├── .streamlit/config.toml   # Dashboard theme
+├── check_data.py            # Quick profile of the raw file
+├── setup.py                 # Rebuild data + model from raw data and launch
+├── requirements.txt         # Dashboard dependencies, pinned (the model pickle is version-specific)
+└── requirements-dev.txt     # + statsmodels, matplotlib, pytest for analysis, report and tests
 ```
 
 ---
@@ -160,8 +205,18 @@ pip install -r requirements.txt
 streamlit run dashboard/app.py
 ```
 
-**To rebuild from raw data:** place the source file at `data/tech_jobs_2026/jobs_large.parquet`, then run
-`python setup.py` (or `python pipeline/collector.py` followed by `python models/train.py`). Training takes about 2 minutes on a laptop.
+**To rebuild everything from raw data:** place the source file at
+`data/tech_jobs_2026/jobs_large.parquet`, then:
+
+```bash
+pip install -r requirements-dev.txt
+python pipeline/collector.py          # clean the data          (~30 s)
+python models/train.py                # train and evaluate      (~2 min)
+python analysis/salary_statistics.py  # confidence intervals    (~30 s)
+python analysis/label_validation.py   # job-type check          (~5 s)
+python report/build_report.py         # rebuild the PDF report (needs Chrome or Edge)
+pytest                                # run all tests
+```
 
 ---
 

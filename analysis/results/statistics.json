@@ -1,0 +1,222 @@
+{
+ "method": {
+  "medians": "Company cluster bootstrap, 1000 replicates, 95% percentile intervals",
+  "regression": "OLS of log salary; company-clustered standard errors; de-duplicated postings; 'Other' job type excluded"
+ },
+ "medians": {
+  "overall": {
+   "median": 160000.0,
+   "ci_low": 155000.0,
+   "ci_high": 165000.0,
+   "n": 64574
+  },
+  "role_family": {
+   "Sales & Business Dev.": {
+    "median": 140100.0,
+    "ci_low": 130000.0,
+    "ci_high": 150000.0,
+    "n": 9405
+   },
+   "Hardware & Engineering": {
+    "median": 165000.0,
+    "ci_low": 157500.0,
+    "ci_high": 170000.0,
+    "n": 7547
+   },
+   "Customer Success & Support": {
+    "median": 120650.0,
+    "ci_low": 112500.0,
+    "ci_high": 130000.0,
+    "n": 1358
+   },
+   "Product & Design": {
+    "median": 190000.0,
+    "ci_low": 185000.0,
+    "ci_high": 195000.0,
+    "n": 3248
+   },
+   "Operations & Admin": {
+    "median": 129500.0,
+    "ci_low": 121695.0,
+    "ci_high": 135000.0,
+    "n": 5238
+   },
+   "Software Engineering": {
+    "median": 195000.0,
+    "ci_low": 190000.0,
+    "ci_high": 200000.0,
+    "n": 11481
+   },
+   "Research & Science": {
+    "median": 168000.0,
+    "ci_low": 153750.0,
+    "ci_high": 184500.0,
+    "n": 1256
+   },
+   "Data & AI": {
+    "median": 190500.0,
+    "ci_low": 185000.0,
+    "ci_high": 200000.0,
+    "n": 3487
+   },
+   "Security": {
+    "median": 188262.5,
+    "ci_low": 180000.0,
+    "ci_high": 200000.0,
+    "n": 1440
+   },
+   "Management": {
+    "median": 150000.0,
+    "ci_low": 144612.0,
+    "ci_high": 157519.99999999997,
+    "n": 4407
+   },
+   "Skilled Trades & Field": {
+    "median": 84460.0,
+    "ci_low": 72820.0,
+    "ci_high": 123187.5,
+    "n": 842
+   },
+   "Marketing & Comms": {
+    "median": 140000.0,
+    "ci_low": 111950.0,
+    "ci_high": 155000.0,
+    "n": 3332
+   },
+   "Finance & Legal": {
+    "median": 155000.0,
+    "ci_low": 150000.0,
+    "ci_high": 160000.0,
+    "n": 2851
+   },
+   "Healthcare": {
+    "median": 140000.0,
+    "ci_low": 102500.0,
+    "ci_high": 195000.0,
+    "n": 2091
+   },
+   "Consulting & Strategy": {
+    "median": 151150.0,
+    "ci_low": 142000.0,
+    "ci_high": 162500.0,
+    "n": 1180
+   },
+   "People & HR": {
+    "median": 140000.0,
+    "ci_low": 133500.0,
+    "ci_high": 150000.0,
+    "n": 1362
+   },
+   "Education": {
+    "median": 73785.25,
+    "ci_low": 50243.75,
+    "ci_high": 93500.0,
+    "n": 752
+   },
+   "Retail & Hospitality": {
+    "median": 80000.0,
+    "ci_low": 69987.5,
+    "ci_high": 105000.0,
+    "n": 587
+   },
+   "Students & Apprentices": {
+    "median": 62250.0,
+    "ci_low": 57500.0,
+    "ci_high": 90000.0,
+    "n": 86
+   }
+  },
+  "seniority": {
+   "Mid / Unspecified": {
+    "median": 136950.0,
+    "ci_low": 131000.0,
+    "ci_high": 144405.75,
+    "n": 32541
+   },
+   "Director / Executive": {
+    "median": 204000.0,
+    "ci_low": 197500.0,
+    "ci_high": 210000.0,
+    "n": 6639
+   },
+   "Senior / Lead": {
+    "median": 170000.0,
+    "ci_low": 165000.0,
+    "ci_high": 173500.0,
+    "n": 16871
+   },
+   "Principal / Staff": {
+    "median": 222500.0,
+    "ci_low": 218988.275,
+    "ci_high": 227550.0,
+    "n": 5350
+   },
+   "Entry / Junior": {
+    "median": 82500.0,
+    "ci_low": 67524.375,
+    "ci_high": 97250.0,
+    "n": 3173
+   }
+  },
+  "remote": {
+   "True": {
+    "median": 170000.0,
+    "ci_low": 165000.0,
+    "ci_high": 176900.0,
+    "n": 19123
+   },
+   "False": {
+    "median": 155000.0,
+    "ci_low": 147500.0,
+    "ci_high": 162000.0,
+    "n": 45451
+   }
+  },
+  "ratios": {
+   "remote_vs_onsite": {
+    "ratio": 1.096774193548387,
+    "ci_low": 1.049209677419355,
+    "ci_high": 1.1666666666666667
+   },
+   "principal_vs_entry": {
+    "ratio": 2.696969696969697,
+    "ci_low": 2.3076666666666665,
+    "ci_high": 3.2851615432409242
+   }
+  }
+ },
+ "remote_regressions": [
+  {
+   "model": "Raw difference",
+   "n": 52749,
+   "effect": 0.09755827693561932,
+   "ci_low": 0.03473647817117401,
+   "ci_high": 0.1641941660344228,
+   "p_value": 0.0019648153102203624
+  },
+  {
+   "model": "+ job type & seniority",
+   "n": 52749,
+   "effect": 0.052703580599150375,
+   "ci_low": 0.005303067335436691,
+   "ci_high": 0.102339050395543,
+   "p_value": 0.028888519716485057
+  },
+  {
+   "model": "+ country & employment type",
+   "n": 52749,
+   "effect": 0.062100003553292024,
+   "ci_low": 0.012714316872070934,
+   "ci_high": 0.11389401606573946,
+   "p_value": 0.013135348509038412
+  },
+  {
+   "model": "+ same company (fixed effects)",
+   "n": 52749,
+   "effect": 0.04667353579762087,
+   "ci_low": 0.024596357518710865,
+   "ci_high": 0.06922641535848656,
+   "p_value": 2.7405748108961836e-05
+  }
+ ]
+}

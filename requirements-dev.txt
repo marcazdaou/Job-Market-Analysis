@@ -1,0 +1,6 @@
+# Extra tools for rebuilding the analysis, the report and running tests.
+# (The hosted dashboard only needs requirements.txt.)
+-r requirements.txt
+statsmodels==0.15.0   # regressions in analysis/salary_statistics.py
+matplotlib==3.10.8    # static charts in report/build_report.py
+pytest==9.1.1         # tests/

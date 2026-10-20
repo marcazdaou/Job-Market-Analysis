@@ -1,0 +1,133 @@
+{
+ "method": "Agreement between title-based job type and the employer's department (departments mapped to groups by keyword; compatible job types per group)",
+ "cross_functional": [
+  "Consulting & Strategy",
+  "Management",
+  "Operations & Admin"
+ ],
+ "n_cross_functional": 18265,
+ "n_checked": 117772,
+ "n_companies": 4706,
+ "agreement": 0.8516285704581734,
+ "ci_low": 0.8495869182666613,
+ "ci_high": 0.8536472838823133,
+ "by_job_type": [
+  {
+   "role_family": "Software Engineering",
+   "agreement": 0.925,
+   "n": 25981
+  },
+  {
+   "role_family": "Sales & Business Dev.",
+   "agreement": 0.915,
+   "n": 22555
+  },
+  {
+   "role_family": "Hardware & Engineering",
+   "agreement": 0.737,
+   "n": 11761
+  },
+  {
+   "role_family": "Data & AI",
+   "agreement": 0.903,
+   "n": 7917
+  },
+  {
+   "role_family": "Marketing & Comms",
+   "agreement": 0.895,
+   "n": 6811
+  },
+  {
+   "role_family": "Product & Design",
+   "agreement": 0.933,
+   "n": 6741
+  },
+  {
+   "role_family": "Finance & Legal",
+   "agreement": 0.727,
+   "n": 6242
+  },
+  {
+   "role_family": "Healthcare",
+   "agreement": 0.759,
+   "n": 4997
+  },
+  {
+   "role_family": "Skilled Trades & Field",
+   "agreement": 0.604,
+   "n": 4722
+  },
+  {
+   "role_family": "Research & Science",
+   "agreement": 0.903,
+   "n": 4131
+  },
+  {
+   "role_family": "Retail & Hospitality",
+   "agreement": 0.822,
+   "n": 3936
+  },
+  {
+   "role_family": "Security",
+   "agreement": 0.838,
+   "n": 3609
+  },
+  {
+   "role_family": "Customer Success & Support",
+   "agreement": 0.773,
+   "n": 3322
+  },
+  {
+   "role_family": "People & HR",
+   "agreement": 0.781,
+   "n": 3195
+  },
+  {
+   "role_family": "Education",
+   "agreement": 0.641,
+   "n": 1852
+  }
+ ],
+ "top_disagreements": [
+  {
+   "role_family": "Hardware & Engineering",
+   "dept_group": "Product & design",
+   "n": 974
+  },
+  {
+   "role_family": "Sales & Business Dev.",
+   "dept_group": "Engineering & technology",
+   "n": 704
+  },
+  {
+   "role_family": "Skilled Trades & Field",
+   "dept_group": "Retail & stores",
+   "n": 586
+  },
+  {
+   "role_family": "Software Engineering",
+   "dept_group": "Sales",
+   "n": 580
+  },
+  {
+   "role_family": "Finance & Legal",
+   "dept_group": "Engineering & technology",
+   "n": 525
+  },
+  {
+   "role_family": "Skilled Trades & Field",
+   "dept_group": "Research",
+   "n": 492
+  },
+  {
+   "role_family": "Hardware & Engineering",
+   "dept_group": "Sales",
+   "n": 484
+  },
+  {
+   "role_family": "Software Engineering",
+   "dept_group": "Customer support",
+   "n": 480
+  }
+ ]
+}

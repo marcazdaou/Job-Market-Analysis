@@ -43,11 +43,19 @@ ROLE_FAMILIES = [
                          r"product management|product design|designer\w*|ux|ui|user experience|user research\w*|"
                          r"creative director|graphiste)\b"),
     ("Security", r"\b(security|cyber\w*|infosec|penetration|appsec|sécurité|sicherheit\w*|beveilig\w*)\b"),
+    # "Engineer" titles that are really sales or support jobs. Found by checking the rules against
+    # employers' departments (analysis/label_validation.py); must come before the generic "engineer".
+    ("Sales & Business Dev.", r"\b(sales engineer\w*|solutions? engineer\w*|solutions? engineering|pre ?sales|"
+                              r"technical sales|ingénieur\w* commercial\w*)\b"),
+    ("Customer Success & Support", r"\b(support engineer\w*|customer engineer\w*|application support|"
+                                   r"escalations? engineer\w*)\b"),
     ("Software Engineering", r"\b(software|developer|programmer|backend|back end|frontend|front end|full ?stack|"
                              r"ios|android|mobile engineer|web engineer|devops|sre|site reliability|platform engineer|"
                              r"infrastructure engineer|cloud|qa engineer|test engineer|sdet|engineering manager|"
                              r"solutions? architect\w*|architekt\w*|member of technical staff|it systems|"
                              r"systems administrator|dotnet|java|sap|salesforce developer|tech lead|technical lead|tpm|"
+                             r"forward deployed|deployment engineer\w*|founding engineer\w*|product engineer\w*|"
+                             r"kotlin|jvm|golang|rust|python|typescript|"
                              r"développeur\w*|developpeur\w*|entwickler\w*|desarrollador\w*|informati\w*|logiciel\w*|"
                              r"it)\b"),
     ("Research & Science", r"\b(scientist|research\w*|laboratory|lab|labor\w*|laboratorio|chemist\w*|biolog\w*|"

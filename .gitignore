@@ -3,6 +3,9 @@ data/tech_jobs_2026/
 data/*.db
 data/ds_salaries.csv
 
+# Test cache
+.pytest_cache/
+
 # Python cache files
 __pycache__/
 *.pyc

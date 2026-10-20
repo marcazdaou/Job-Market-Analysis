@@ -31,6 +31,8 @@ DATA = ROOT / "data" / "jobs_clean.parquet"
 SUMMARY = ROOT / "data" / "data_summary.json"
 MODEL = ROOT / "models" / "salary_model.pkl"
 META = ROOT / "models" / "model_meta.json"
+STATS = ROOT / "analysis" / "results" / "statistics.json"          # analysis/salary_statistics.py
+LABEL_CHECK = ROOT / "analysis" / "results" / "label_validation.json"  # analysis/label_validation.py
 
 AUTHOR = "Marc Abi Zeid Daou"
 LINKS = {"GitHub": "https://github.com/marcazdaou/Job-Market-Analysis",
@@ -190,6 +192,12 @@ def load_summary() -> dict:
     return json.loads(SUMMARY.read_text(encoding="utf-8"))
 
 
+@st.cache_resource
+def load_json(path: Path) -> dict:
+    """Optional result file (statistics, label accuracy); empty dict if it hasn't been produced."""
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
 # ══ Small helpers ═════════════════════════════════════════════════════════════
 def usd(x: float) -> str:
     """Compact dollars for chart labels: 123456 -> '$123k' (halves round up, e.g. 82,500 -> '$83k')."""
@@ -248,16 +256,27 @@ def salary_stats(df: pd.DataFrame, by: str) -> pd.DataFrame:
     return stats[stats["n"] >= MIN_GROUP]
 
 
-def median_iqr_chart(stats: pd.DataFrame, label: str, height: int):
-    """Median (dot) with the middle 50% of salaries (bar): typical pay AND spread."""
-    stats = stats.sort_values("median")
+def ci_text(ci: dict | None, key) -> str:
+    """'95% CI $155k–$165k' for a group from the bootstrap results, or '' if unavailable."""
+    item = (ci or {}).get(str(key))
+    return f"95% CI {usd(item['ci_low'])}–{usd(item['ci_high'])}" if item else ""
+
+
+def median_iqr_chart(stats: pd.DataFrame, label: str, height: int, ci: dict | None = None):
+    """Median (dot) with the middle 50% of salaries (bar): typical pay AND spread.
+
+    `ci` (optional) maps each group to its bootstrap confidence interval for the
+    median; it is shown in the tooltip.
+    """
+    stats = stats.sort_values("median").copy()
+    stats["ci"] = stats[label].map(lambda k: ci_text(ci, k))
     fig = go.Figure()
     fig.add_bar(x=stats["p75"] - stats["p25"], base=stats["p25"], y=stats[label], orientation="h",
                 marker_color=BLUE_LIGHT, width=0.5, hoverinfo="skip")
     fig.add_scatter(x=stats["median"], y=stats[label], mode="markers",
                     marker=dict(color=BLUE, size=11, line=dict(color=CARD, width=2)),
-                    customdata=stats[["p25", "p75", "n"]],
-                    hovertemplate="Typical salary <b>%{x:$,.0f}</b><br>"
+                    customdata=stats[["p25", "p75", "n", "ci"]],
+                    hovertemplate="Typical salary <b>%{x:$,.0f}</b> %{customdata[3]}<br>"
                                   "Most pay between %{customdata[0]:$,.0f} and %{customdata[1]:$,.0f}<br>"
                                   "Based on %{customdata[2]:,} postings<extra></extra>")
     fig.update_layout(height=height, xaxis=dict(tickformat="$~s", title="Yearly salary (USD)"),
@@ -290,35 +309,47 @@ def key_findings():
     top3 = fam.nlargest(3, "median")
     sen = salary_stats(all_salaried, "seniority").set_index("seniority")["median"]
     entry, principal = sen["Entry / Junior"], sen["Principal / Staff"]
-    listed = jobs.assign(listed=jobs["salary_status"].ne("no_salary")).groupby("country", observed=True)["listed"].mean()
     effects = pd.DataFrame(meta["skill_effects"]).query("postings >= 300")["effect"] if meta else pd.Series([0.0])
-    remote = salary_stats(all_salaried, "remote").set_index("remote")["median"]
     # Best-paid skill by raw median (skills with at least 100 salaried postings).
     skill_pay = (skills_long.dropna(subset=["salary_mid"]).groupby("skill")["salary_mid"]
                  .agg(["median", "size"]).query("size >= 100"))
     best_skill, best_pay = skill_pay["median"].idxmax(), skill_pay["median"].max()
 
+    # Uncertainty from analysis/salary_statistics.py (company cluster bootstrap + regressions).
+    med = stats_results.get("medians", {})
+    overall_ci = f" (95% CI {usd(med['overall']['ci_low'])}–{usd(med['overall']['ci_high'])})" if med else ""
+    fam_ci = med.get("role_family", {})
+    # Do the top three's intervals overlap? If so, their order is not statistically certain.
+    tops = [fam_ci.get(f) for f in top3["role_family"]]
+    tied = all(tops) and max(t["ci_low"] for t in tops) <= min(t["ci_high"] for t in tops)
+    ratio = med.get("ratios", {}).get("principal_vs_entry")
+    regs = {r["model"]: r for r in stats_results.get("remote_regressions", [])}
+
     row1 = st.columns(3)
     finding(row1[0], "1 · How much do these jobs pay?", f"{usd(sal.median())} typical advertised salary",
             f"Half of advertised salaries fall between {usd(sal.quantile(.25))} and {usd(sal.quantile(.75))} "
-            f"per year ({len(sal):,} postings with a yearly USD salary, mostly US jobs).", "Salaries tab")
+            f"per year{overall_ci}, from {len(sal):,} postings with a yearly USD salary, mostly US jobs.",
+            "Salaries tab")
     finding(row1[1], "2 · Which jobs pay the most?", ", ".join(top3["role_family"]),
             "Typical salaries of " + ", ".join(usd(v) for v in top3["median"]) +
-            f", against {usd(sal.median())} across all jobs.", "Salaries tab")
+            f", against {usd(sal.median())} across all jobs." +
+            (" Their confidence intervals overlap, so the three are statistically tied." if tied else ""),
+            "Salaries tab")
     finding(row1[2], "3 · How much does seniority matter?", f"{principal / entry:.1f}× from entry to staff level",
-            f"Entry-level titles advertise {usd(entry)} typically; principal/staff titles {usd(principal)}.",
+            f"Entry-level titles advertise {usd(entry)} typically; principal/staff titles {usd(principal)}" +
+            (f" (95% CI for the ratio: {ratio['ci_low']:.1f}×–{ratio['ci_high']:.1f}×)." if ratio else "."),
             "Salaries tab")
     st.write("")
     row2 = st.columns(3)
     finding(row2[0], "4 · Do skills raise pay?", "Less than the job and employer do",
             f"Jobs asking for {best_skill} pay {usd(best_pay)} typically, but once title, company and city "
             f"are accounted for, a single skill shifts pay by at most {effects.abs().max():.0%}.", "Skills tab")
-    finding(row2[1], "5 · Are employers open about pay?",
-            f"{jobs['salary_status'].ne('no_salary').mean():.0%} of postings show a salary",
-            f"It depends on the law: {listed['United States']:.0%} in the US and "
-            f"{listed['United Kingdom']:.0%} in the UK, but {listed['Germany']:.0%} in Germany and "
-            f"{listed['France']:.0%} in France. Remote jobs advertise {usd(remote[True])} typically vs "
-            f"{usd(remote[False])} on-site.", "Overview map")
+    if regs:
+        raw, fe = regs["Raw difference"], regs["+ same company (fixed effects)"]
+        finding(row2[1], "5 · Do remote jobs pay more?", f"Yes, about {fe['effect']:.0%} for comparable jobs",
+                f"Remote postings advertise {raw['effect']:+.0%} more overall, but part of that is job mix. "
+                f"Comparing similar jobs at the same company, the gap is {fe['effect']:+.1%} "
+                f"(95% CI {fe['ci_low']:+.1%} to {fe['ci_high']:+.1%}).", "Salaries tab")
     if meta:
         finding(row2[2], "6 · Can machine learning predict a salary?",
                 f"Yes, within {meta['test']['median_ape']:.0%} for a typical job",
@@ -344,6 +375,8 @@ def data_scope():
     senior_share = all_salaried["seniority"].isin(["Senior / Lead", "Principal / Staff",
                                                    "Director / Executive"]).mean()
     sal_tech = sal_known["role_family"].isin(TECH_FAMILIES).mean()
+    listed = (jobs.assign(listed=jobs["salary_status"].ne("no_salary"))
+              .groupby("country", observed=True)["listed"].mean())
 
     cols = st.columns(3)
     boxes = [
@@ -351,8 +384,9 @@ def data_scope():
          f"Tech jobs (software, data, product, security) are {tech_share:.0%} of postings. The rest include "
          f"{', '.join(b.lower() for b in biggest[:-1])} and {biggest[-1].lower()}, plus healthcare, education and more."),
         ("Which salaries?", f"{len(all_salaried):,} postings with a yearly USD salary",
-         f"{us_share:.0%} of them are US jobs, where pay-transparency laws require employers to post a range. "
-         "Postings in other currencies or with hourly pay are counted as postings but not in salary charts."),
+         f"{us_share:.0%} of them are US jobs: pay-transparency laws mean {listed['United States']:.0%} of US "
+         f"postings show a salary, versus {listed['Germany']:.0%} in Germany and {listed['France']:.0%} in France. "
+         "Hourly or non-USD pay counts as a posting but not in salary charts."),
         ("Why do salaries look high?", "They describe these postings, not all workers",
          "Most are US jobs, where pay is higher than in most countries. Also, "
          f"{sal_tech:.0%} of salaried postings are tech jobs and {senior_share:.0%} are senior level or above. "
@@ -375,6 +409,8 @@ jobs = load_jobs()
 skills_long = load_skills_long()
 model, meta = load_model()
 summary = load_summary()
+stats_results = load_json(STATS)       # confidence intervals + remote-pay regressions
+label_check = load_json(LABEL_CHECK)   # job-type rules checked against employers' departments
 all_salaried = jobs.dropna(subset=["salary_mid"])
 
 # ══ Sidebar filters (apply to every tab except the ML predictor) ══════════════
@@ -591,10 +627,14 @@ with tab_salary:
         left, right = st.columns(2)
         with left:
             stats = salary_stats(salaried[salaried["role_family"] != OTHER_FAMILY], "role_family")
+            # Confidence intervals were computed on all postings, so they are shown only when unfiltered.
+            fam_ci = stats_results.get("medians", {}).get("role_family") if mask.all() else None
             with card("Typical pay by type of job",
                       "Dot = typical (median) salary. Light bar = the range where the middle half of salaries "
-                      "fall, so a longer bar means pay varies more."):
-                show(median_iqr_chart(stats, "role_family", 520), stats_table(stats, "role_family", "Role family"))
+                      "fall, so a longer bar means pay varies more." +
+                      (" Hover for the 95% confidence interval of each median." if fam_ci else "")):
+                show(median_iqr_chart(stats, "role_family", 520, fam_ci),
+                     stats_table(stats, "role_family", "Role family"))
         with right:
             stats = salary_stats(salaried, "seniority")
             stats["seniority"] = stats["seniority"].astype(str)
@@ -613,10 +653,25 @@ with tab_salary:
                     textfont=dict(color=INK_2), customdata=stats[["p25", "p75", "n", "step"]],
                     hovertemplate="%{customdata[3]}<br>Most pay between %{customdata[0]:$,.0f} and "
                                   "%{customdata[1]:$,.0f}<br>%{customdata[2]:,} postings<extra></extra>"))
+                # 95% confidence-interval whiskers (bootstrap, all postings): only when unfiltered.
+                sen_ci = stats_results.get("medians", {}).get("seniority") if mask.all() else None
+                if sen_ci:
+                    lo = stats["seniority"].map(lambda k: sen_ci[k]["ci_low"])
+                    hi = stats["seniority"].map(lambda k: sen_ci[k]["ci_high"])
+                    fig.update_traces(error_y=dict(type="data", symmetric=False, array=hi - stats["median"],
+                                                   arrayminus=stats["median"] - lo, color=INK_2,
+                                                   thickness=1.5, width=6),
+                                      # value labels move inside the bars so they don't overlap the whiskers
+                                      textposition="inside", insidetextanchor="start",
+                                      # dark text on the light bars, white text on the dark bars
+                                      textfont=dict(color=[INK if i < 2 else "#ffffff" for i in stats["order"]],
+                                                    size=12))
                 fig.update_layout(height=520, margin=dict(t=24),
                                   yaxis=dict(tickformat="$~s", title="Typical (median) salary"),
                                   xaxis=dict(gridcolor="rgba(0,0,0,0)", categoryorder="array",
                                              categoryarray=stats["label"].tolist(), tickangle=0))
+                if sen_ci:
+                    st.caption("Black whiskers = 95% confidence interval for each median.")
                 show(fig, stats_table(stats, "seniority", "Seniority"))
 
         # Remote vs. on-site pay, per role family (dumbbell chart).
@@ -628,7 +683,7 @@ with tab_salary:
         if len(gap):
             gap["diff"] = gap["remote"] / gap["onsite"] - 1
             gap = gap.sort_values("diff")
-            with card("Do remote jobs pay less than on-site jobs?",
+            with card("Remote vs. on-site pay, by type of job",
                       "For each type of job: blue dot = typical remote salary, orange dot = typical on-site salary. "
                       "The gray line between them is the pay gap. A gap can also reflect a different mix of jobs "
                       "(e.g. remote healthcare postings are mostly senior clinicians), not only the work arrangement."):
@@ -651,6 +706,40 @@ with tab_salary:
                 show(fig, gap.assign(diff=gap["diff"].map(lambda v: f"{v:+.1%}"))
                      .rename(columns={"role_family": "Role family", "remote": "Remote median",
                                       "onsite": "On-site median", "diff": "Remote vs. on-site"}))
+
+        # Fair comparison: how the remote gap changes as similar jobs are compared (regressions).
+        regs = pd.DataFrame(stats_results.get("remote_regressions", []))
+        if len(regs):
+            with card("A fair comparison: how much of the remote gap is real?",
+                      "Each row compares remote and on-site postings more strictly than the one above it. "
+                      "Dot = estimated remote pay difference; line = 95% confidence interval (if it doesn't cross "
+                      "0%, the difference is statistically significant). Uses all postings, not the filters."):
+                regs = regs.iloc[::-1]  # first model at the top
+                fig = go.Figure(go.Scatter(
+                    x=regs["effect"], y=regs["model"], mode="markers+text",
+                    marker=dict(color=BLUE, size=12, line=dict(color=CARD, width=2)),
+                    error_x=dict(type="data", symmetric=False, array=regs["ci_high"] - regs["effect"],
+                                 arrayminus=regs["effect"] - regs["ci_low"], color=INK_2, thickness=1.5, width=6),
+                    text=regs["effect"].map(lambda v: f"{v:+.1%}"), textposition="top center",
+                    textfont=dict(color=INK_2, size=12), customdata=regs[["ci_low", "ci_high", "p_value", "n"]],
+                    hovertemplate="Remote pay difference %{x:+.1%}<br>95% CI %{customdata[0]:+.1%} to "
+                                  "%{customdata[1]:+.1%}<br>p-value %{customdata[2]:.2g} · "
+                                  "%{customdata[3]:,} postings<extra></extra>"))
+                fig.add_vline(x=0, line_color=AXIS, line_width=1.5)
+                fig.update_layout(height=320, margin=dict(t=24),
+                                  xaxis=dict(tickformat="+.0%", title="Remote pay vs. on-site (comparable jobs)",
+                                             range=[min(0, regs["ci_low"].min()) - 0.02, regs["ci_high"].max() + 0.03]),
+                                  yaxis=dict(gridcolor="rgba(0,0,0,0)"))
+                st.caption("Rows: (1) all postings · (2) same job type and seniority · (3) also same country and "
+                           "employment type · (4) also the same company. Regression of log salary with "
+                           "company-clustered standard errors.")
+                show(fig, regs.iloc[::-1].assign(
+                    effect=lambda d: d["effect"].map(lambda v: f"{v:+.1%}"),
+                    ci=lambda d: [f"{a:+.1%} to {b:+.1%}" for a, b in zip(d["ci_low"], d["ci_high"])],
+                    p_value=lambda d: d["p_value"].map(lambda v: f"{v:.2g}"))
+                    [["model", "effect", "ci", "p_value", "n"]]
+                    .rename(columns={"model": "Comparison", "effect": "Remote difference", "ci": "95% CI",
+                                     "p_value": "p-value", "n": "Postings"}))
 
         left, right = st.columns(2)
         with left:
@@ -1049,6 +1138,15 @@ with tab_about:
     funnel["Share"] = (funnel["Postings"] / funnel["Postings"].sum()).map(lambda v: f"{v:.1%}")
     funnel["Postings"] = funnel["Postings"].map(lambda v: f"{v:,}")
 
+    # Accuracy of the job-type rules, shown once titles have been hand-labeled.
+    label_check_md = (
+        f"* **Job-type labels** were checked against the department each employer chose for the posting: on "
+        f"{label_check['n_checked']:,} postings from {label_check['n_companies']:,} companies, the title-based job "
+        f"type matched the department {label_check['agreement']:.0%} of the time (95% CI "
+        f"{label_check['ci_low']:.1%}–{label_check['ci_high']:.1%}). Cross-functional types (operations, "
+        "consulting, management) sit in every department, so they can't be checked this way.\n"
+        if label_check else "")
+
     left, right = st.columns([1, 1], gap="large")
     with left:
         st.markdown(f"""
@@ -1073,6 +1171,12 @@ pages (Greenhouse, Lever, Ashby, SmartRecruiters, Workable) across {summary['cou
 * Candidate models are compared by 5-fold cross-validation on 80% of the data; the winner is scored once on
   the remaining 20%, and again on companies it has never seen.
 
+### How uncertainty is measured
+* **Confidence intervals** for medians use a *company cluster bootstrap* (1,000 replicates): each replicate
+  resamples whole companies, because postings from the same company are not independent.
+* **Remote vs. on-site** is estimated with regressions of log salary that add controls step by step (job type,
+  seniority, country, employment type, then company fixed effects), with company-clustered standard errors.
+{label_check_md}
 ### Scope
 * Salaries are the ranges employers advertise in their postings.
 * Most salaried postings are from the US, where pay-transparency laws require ranges.
