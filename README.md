@@ -162,6 +162,29 @@ remote vs. on-site) can partly reflect a different mix of jobs in each group.
 
 ---
 
+## How it works
+
+```mermaid
+flowchart LR
+    A["Raw job postings<br/>394,300 rows"] --> B["1. Clean & label<br/>pipeline/collector.py"]
+    B --> C[("jobs_clean.parquet<br/>64,574 yearly USD salaries")]
+    C --> D["2. Salary model<br/>models/train.py"]
+    C --> E["3. Statistics<br/>analysis/"]
+    D --> F["salary_model.pkl<br/>R² 0.77"]
+    E --> G["Bootstrap CIs, fixed effects,<br/>label validation"]
+    F --> H["Streamlit dashboard<br/>dashboard/app.py"]
+    G --> H
+    F --> I["PDF report<br/>report/build_report.py"]
+    G --> I
+    T["49 pytest checks<br/>GitHub Actions"] -.-> B
+    T -.-> D
+    T -.-> H
+```
+
+Steps 1–3 run offline and commit their results, so the dashboard only reads saved files and opens instantly.
+
+---
+
 ## Project structure
 
 ```
